@@ -1,11 +1,13 @@
 use std::borrow::Cow;
 
-use ::url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
+use ::percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 use ::url::Url;
 
 pub struct Params<'a> {
     params: Vec<(&'a str, Cow<'a, str>)>,
 }
+
+const QUERY: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'#').add(b'<').add(b'>');
 
 impl<'a> Params<'a> {
     pub fn with_capacity(capacity: usize) -> Self {
@@ -43,7 +45,7 @@ impl<'a> Params<'a> {
         if url_encode {
             let mut replace_with: Cow<str> = self.get(param).unwrap_or_default().into();
             if from.as_bytes()[1] == b'+' {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET)
+                replace_with = percent_encode(replace_with.as_bytes(), QUERY)
                     .to_string()
                     .into();
             }
