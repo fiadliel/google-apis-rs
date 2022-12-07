@@ -1,19 +1,20 @@
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::default::Default;
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::error::Error as StdError;
 use serde_json as json;
 use std::io;
 use std::fs;
 use std::mem;
-use std::thread::sleep;
 
-use http::Uri;
 use hyper::client::connect;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::time::sleep;
 use tower_service;
-use crate::client;
+use serde::{Serialize, Deserialize};
+
+use crate::{client, client::GetToken, client::serde_with};
 
 // ##############
 // UTILITIES ###
@@ -78,7 +79,7 @@ impl Default for Scope {
 /// use storage1::{Result, Error};
 /// # async fn dox() {
 /// use std::default::Default;
-/// use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// // Get an ApplicationSecret instance by some means. It contains the `client_id` and 
 /// // `client_secret`, among other things.
@@ -103,19 +104,19 @@ impl Default for Scope {
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.objects().rewrite(req, "sourceBucket", "sourceObject", "destinationBucket", "destinationObject")
 ///              .user_project("et")
-///              .source_generation("sed")
+///              .source_generation(-43)
 ///              .rewrite_token("et")
 ///              .provisional_user_project("et")
 ///              .projection("vero")
-///              .max_bytes_rewritten_per_call("erat")
-///              .if_source_metageneration_not_match("sed")
-///              .if_source_metageneration_match("duo")
-///              .if_source_generation_not_match("dolore")
-///              .if_source_generation_match("et")
-///              .if_metageneration_not_match("voluptua.")
-///              .if_metageneration_match("amet.")
-///              .if_generation_not_match("consetetur")
-///              .if_generation_match("diam")
+///              .max_bytes_rewritten_per_call(-31)
+///              .if_source_metageneration_not_match(-93)
+///              .if_source_metageneration_match(-20)
+///              .if_source_generation_not_match(-34)
+///              .if_source_generation_match(-22)
+///              .if_metageneration_not_match(-28)
+///              .if_metageneration_match(-2)
+///              .if_generation_not_match(-96)
+///              .if_generation_match(-92)
 ///              .destination_predefined_acl("dolor")
 ///              .destination_kms_key_name("et")
 ///              .doit().await;
@@ -142,7 +143,7 @@ impl Default for Scope {
 #[derive(Clone)]
 pub struct Storage<S> {
     pub client: hyper::Client<S, hyper::body::Body>,
-    pub auth: oauth2::authenticator::Authenticator<S>,
+    pub auth: Box<dyn client::GetToken>,
     _user_agent: String,
     _base_url: String,
     _root_url: String,
@@ -152,11 +153,11 @@ impl<'a, S> client::Hub for Storage<S> {}
 
 impl<'a, S> Storage<S> {
 
-    pub fn new(client: hyper::Client<S, hyper::body::Body>, authenticator: oauth2::authenticator::Authenticator<S>) -> Storage<S> {
+    pub fn new<A: 'static + client::GetToken>(client: hyper::Client<S, hyper::body::Body>, auth: A) -> Storage<S> {
         Storage {
             client,
-            auth: authenticator,
-            _user_agent: "google-api-rust-client/4.0.1".to_string(),
+            auth: Box::new(auth),
+            _user_agent: "google-api-rust-client/5.0.2-beta-1".to_string(),
             _base_url: "https://storage.googleapis.com/storage/v1/".to_string(),
             _root_url: "https://storage.googleapis.com/".to_string(),
         }
@@ -188,7 +189,7 @@ impl<'a, S> Storage<S> {
     }
 
     /// Set the user-agent header field to use in all requests to the server.
-    /// It defaults to `google-api-rust-client/4.0.1`.
+    /// It defaults to `google-api-rust-client/5.0.2-beta-1`.
     ///
     /// Returns the previously set user-agent.
     pub fn user_agent(&mut self, agent_name: String) -> String {
@@ -234,78 +235,111 @@ impl<'a, S> Storage<S> {
 /// * [test iam permissions buckets](BucketTestIamPermissionCall) (none)
 /// * [update buckets](BucketUpdateCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Bucket {
     /// Access controls on the bucket.
+    
     pub acl: Option<Vec<BucketAccessControl>>,
     /// The bucket's Autoclass configuration.
+    
     pub autoclass: Option<BucketAutoclass>,
     /// The bucket's billing configuration.
+    
     pub billing: Option<BucketBilling>,
     /// The bucket's Cross-Origin Resource Sharing (CORS) configuration.
+    
     pub cors: Option<Vec<BucketCors>>,
     /// The bucket's custom placement configuration for Custom Dual Regions.
     #[serde(rename="customPlacementConfig")]
+    
     pub custom_placement_config: Option<BucketCustomPlacementConfig>,
     /// The default value for event-based hold on newly created objects in this bucket. Event-based hold is a way to retain objects indefinitely until an event occurs, signified by the hold's release. After being released, such objects will be subject to bucket-level retention (if any). One sample use case of this flag is for banks to hold loan documents for at least 3 years after loan is paid in full. Here, bucket-level retention is 3 years and the event is loan being paid in full. In this example, these objects will be held intact for any number of years until the event has occurred (event-based hold on the object is released) and then 3 more years after that. That means retention duration of the objects begins from the moment event-based hold transitioned from true to false. Objects under event-based hold cannot be deleted, overwritten or archived until the hold is removed.
     #[serde(rename="defaultEventBasedHold")]
+    
     pub default_event_based_hold: Option<bool>,
     /// Default access controls to apply to new objects when no ACL is provided.
     #[serde(rename="defaultObjectAcl")]
+    
     pub default_object_acl: Option<Vec<ObjectAccessControl>>,
     /// Encryption configuration for a bucket.
+    
     pub encryption: Option<BucketEncryption>,
     /// HTTP 1.1 Entity tag for the bucket.
+    
     pub etag: Option<String>,
     /// The bucket's IAM configuration.
     #[serde(rename="iamConfiguration")]
+    
     pub iam_configuration: Option<BucketIamConfiguration>,
     /// The ID of the bucket. For buckets, the id and name properties are the same.
+    
     pub id: Option<String>,
     /// The kind of item this is. For buckets, this is always storage#bucket.
+    
     pub kind: Option<String>,
     /// User-provided labels, in key/value pairs.
+    
     pub labels: Option<HashMap<String, String>>,
     /// The bucket's lifecycle configuration. See lifecycle management for more information.
+    
     pub lifecycle: Option<BucketLifecycle>,
     /// The location of the bucket. Object data for objects in the bucket resides in physical storage within this region. Defaults to US. See the developer's guide for the authoritative list.
+    
     pub location: Option<String>,
     /// The type of the bucket location.
     #[serde(rename="locationType")]
+    
     pub location_type: Option<String>,
     /// The bucket's logging configuration, which defines the destination bucket and optional name prefix for the current bucket's logs.
+    
     pub logging: Option<BucketLogging>,
     /// The metadata generation of this bucket.
-    pub metageneration: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub metageneration: Option<i64>,
     /// The name of the bucket.
+    
     pub name: Option<String>,
     /// The owner of the bucket. This is always the project team's owner group.
+    
     pub owner: Option<BucketOwner>,
     /// The project number of the project the bucket belongs to.
     #[serde(rename="projectNumber")]
-    pub project_number: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub project_number: Option<u64>,
     /// The bucket's retention policy. The retention policy enforces a minimum retention time for all objects contained in the bucket, based on their creation time. Any attempt to overwrite or delete objects younger than the retention period will result in a PERMISSION_DENIED error. An unlocked retention policy can be modified or removed from the bucket via a storage.buckets.update operation. A locked retention policy cannot be removed or shortened in duration for the lifetime of the bucket. Attempting to remove or decrease period of a locked retention policy will result in a PERMISSION_DENIED error.
     #[serde(rename="retentionPolicy")]
+    
     pub retention_policy: Option<BucketRetentionPolicy>,
     /// The Recovery Point Objective (RPO) of this bucket. Set to ASYNC_TURBO to turn on Turbo Replication on a bucket.
+    
     pub rpo: Option<String>,
     /// Reserved for future use.
     #[serde(rename="satisfiesPZS")]
+    
     pub satisfies_pzs: Option<bool>,
     /// The URI of this bucket.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
     /// The bucket's default storage class, used whenever no storageClass is specified for a newly-created object. This defines how objects in the bucket are stored and determines the SLA and the cost of storage. Values include MULTI_REGIONAL, REGIONAL, STANDARD, NEARLINE, COLDLINE, ARCHIVE, and DURABLE_REDUCED_AVAILABILITY. If this value is not specified when the bucket is created, it will default to STANDARD. For more information, see storage classes.
     #[serde(rename="storageClass")]
+    
     pub storage_class: Option<String>,
     /// The creation time of the bucket in RFC 3339 format.
     #[serde(rename="timeCreated")]
-    pub time_created: Option<String>,
+    
+    pub time_created: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The modification time of the bucket in RFC 3339 format.
-    pub updated: Option<String>,
+    
+    pub updated: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The bucket's versioning configuration.
+    
     pub versioning: Option<BucketVersioning>,
     /// The bucket's website configuration, controlling how the service behaves when accessing bucket contents as a web site. See the Static Website Examples for more information.
+    
     pub website: Option<BucketWebsite>,
 }
 
@@ -328,13 +362,17 @@ impl client::ResponseResult for Bucket {}
 /// * [patch bucket access controls](BucketAccessControlPatchCall) (request|response)
 /// * [update bucket access controls](BucketAccessControlUpdateCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketAccessControl {
     /// The name of the bucket.
+    
     pub bucket: Option<String>,
     /// The domain associated with the entity, if any.
+    
     pub domain: Option<String>,
     /// The email address associated with the entity, if any.
+    
     pub email: Option<String>,
     /// The entity holding the permission, in one of the following forms: 
     /// - user-userId 
@@ -348,23 +386,31 @@ pub struct BucketAccessControl {
     /// - The user liz@example.com would be user-liz@example.com. 
     /// - The group example@googlegroups.com would be group-example@googlegroups.com. 
     /// - To refer to all members of the Google Apps for Business domain example.com, the entity would be domain-example.com.
+    
     pub entity: Option<String>,
     /// The ID for the entity, if any.
     #[serde(rename="entityId")]
+    
     pub entity_id: Option<String>,
     /// HTTP 1.1 Entity tag for the access-control entry.
+    
     pub etag: Option<String>,
     /// The ID of the access-control entry.
+    
     pub id: Option<String>,
     /// The kind of item this is. For bucket access control entries, this is always storage#bucketAccessControl.
+    
     pub kind: Option<String>,
     /// The project team associated with the entity, if any.
     #[serde(rename="projectTeam")]
+    
     pub project_team: Option<BucketAccessControlProjectTeam>,
     /// The access permission for the entity.
+    
     pub role: Option<String>,
     /// The link to this access-control entry.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -382,11 +428,14 @@ impl client::ResponseResult for BucketAccessControl {}
 /// 
 /// * [list bucket access controls](BucketAccessControlListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketAccessControls {
     /// The list of items.
+    
     pub items: Option<Vec<BucketAccessControl>>,
     /// The kind of item this is. For lists of bucket access control entries, this is always storage#bucketAccessControls.
+    
     pub kind: Option<String>,
 }
 
@@ -402,14 +451,18 @@ impl client::ResponseResult for BucketAccessControls {}
 /// 
 /// * [list buckets](BucketListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Buckets {
     /// The list of items.
+    
     pub items: Option<Vec<Bucket>>,
     /// The kind of item this is. For lists of buckets, this is always storage#buckets.
+    
     pub kind: Option<String>,
     /// The continuation token, used to page through large result sets. Provide this value in a subsequent request to return the next page of results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
 }
 
@@ -426,30 +479,42 @@ impl client::ResponseResult for Buckets {}
 /// * [stop channels](ChannelStopCall) (request)
 /// * [watch all objects](ObjectWatchAllCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Channel {
     /// The address where notifications are delivered for this channel.
+    
     pub address: Option<String>,
     /// Date and time of notification channel expiration, expressed as a Unix timestamp, in milliseconds. Optional.
-    pub expiration: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub expiration: Option<i64>,
     /// A UUID or similar unique string that identifies this channel.
+    
     pub id: Option<String>,
     /// Identifies this as a notification channel used to watch for changes to a resource, which is "api#channel".
+    
     pub kind: Option<String>,
     /// Additional parameters controlling delivery channel behavior. Optional.
+    
     pub params: Option<HashMap<String, String>>,
     /// A Boolean value to indicate whether payload is wanted. Optional.
+    
     pub payload: Option<bool>,
     /// An opaque ID that identifies the resource being watched on this channel. Stable across different API versions.
     #[serde(rename="resourceId")]
+    
     pub resource_id: Option<String>,
     /// A version-specific identifier for the watched resource.
     #[serde(rename="resourceUri")]
+    
     pub resource_uri: Option<String>,
     /// An arbitrary string delivered to the target address with each notification delivered over this channel. Optional.
+    
     pub token: Option<String>,
     /// The type of delivery mechanism used for this channel.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -467,14 +532,18 @@ impl client::ResponseResult for Channel {}
 /// 
 /// * [compose objects](ObjectComposeCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ComposeRequest {
     /// Properties of the resulting object.
+    
     pub destination: Option<Object>,
     /// The kind of item this is.
+    
     pub kind: Option<String>,
     /// The list of source objects that will be concatenated into a single object.
     #[serde(rename="sourceObjects")]
+    
     pub source_objects: Option<Vec<ComposeRequestSourceObjects>>,
 }
 
@@ -485,15 +554,20 @@ impl client::RequestValue for ComposeRequest {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Expr {
     /// An optional description of the expression. This is a longer text which describes the expression, e.g. when hovered over it in a UI.
+    
     pub description: Option<String>,
     /// Textual representation of an expression in Common Expression Language syntax. The application context of the containing message determines which well-known feature set of CEL is supported.
+    
     pub expression: Option<String>,
     /// An optional string indicating the location of the expression for error reporting, e.g. a file name and a position in the file.
+    
     pub location: Option<String>,
     /// An optional title for the expression, i.e. a short string describing its purpose. This can be used e.g. in UIs which allow to enter the expression.
+    
     pub title: Option<String>,
 }
 
@@ -509,13 +583,17 @@ impl client::Part for Expr {}
 /// 
 /// * [hmac keys create projects](ProjectHmacKeyCreateCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct HmacKey {
     /// The kind of item this is. For HMAC keys, this is always storage#hmacKey.
+    
     pub kind: Option<String>,
     /// Key metadata.
+    
     pub metadata: Option<HmacKeyMetadata>,
     /// HMAC secret key material.
+    
     pub secret: Option<String>,
 }
 
@@ -532,33 +610,44 @@ impl client::ResponseResult for HmacKey {}
 /// * [hmac keys get projects](ProjectHmacKeyGetCall) (response)
 /// * [hmac keys update projects](ProjectHmacKeyUpdateCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct HmacKeyMetadata {
     /// The ID of the HMAC Key.
     #[serde(rename="accessId")]
+    
     pub access_id: Option<String>,
     /// HTTP 1.1 Entity tag for the HMAC key.
+    
     pub etag: Option<String>,
     /// The ID of the HMAC key, including the Project ID and the Access ID.
+    
     pub id: Option<String>,
     /// The kind of item this is. For HMAC Key metadata, this is always storage#hmacKeyMetadata.
+    
     pub kind: Option<String>,
     /// Project ID owning the service account to which the key authenticates.
     #[serde(rename="projectId")]
+    
     pub project_id: Option<String>,
     /// The link to this resource.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
     /// The email address of the key's associated service account.
     #[serde(rename="serviceAccountEmail")]
+    
     pub service_account_email: Option<String>,
     /// The state of the key. Can be one of ACTIVE, INACTIVE, or DELETED.
+    
     pub state: Option<String>,
     /// The creation time of the HMAC key in RFC 3339 format.
     #[serde(rename="timeCreated")]
-    pub time_created: Option<String>,
+    
+    pub time_created: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The last modification time of the HMAC key metadata in RFC 3339 format.
-    pub updated: Option<String>,
+    
+    pub updated: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
 }
 
 impl client::RequestValue for HmacKeyMetadata {}
@@ -574,14 +663,18 @@ impl client::ResponseResult for HmacKeyMetadata {}
 /// 
 /// * [hmac keys list projects](ProjectHmacKeyListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct HmacKeysMetadata {
     /// The list of items.
+    
     pub items: Option<Vec<HmacKeyMetadata>>,
     /// The kind of item this is. For lists of hmacKeys, this is always storage#hmacKeysMetadata.
+    
     pub kind: Option<String>,
     /// The continuation token, used to page through large result sets. Provide this value in a subsequent request to return the next page of results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
 }
 
@@ -600,26 +693,36 @@ impl client::ResponseResult for HmacKeysMetadata {}
 /// * [insert notifications](NotificationInsertCall) (request|response)
 /// * [list notifications](NotificationListCall) (none)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Notification {
     /// An optional list of additional attributes to attach to each Cloud PubSub message published for this notification subscription.
+    
     pub custom_attributes: Option<HashMap<String, String>>,
     /// HTTP 1.1 Entity tag for this subscription notification.
+    
     pub etag: Option<String>,
     /// If present, only send notifications about listed event types. If empty, sent notifications for all event types.
+    
     pub event_types: Option<Vec<String>>,
     /// The ID of the notification.
+    
     pub id: Option<String>,
     /// The kind of item this is. For notifications, this is always storage#notification.
+    
     pub kind: Option<String>,
     /// If present, only apply this notification configuration to object names that begin with this prefix.
+    
     pub object_name_prefix: Option<String>,
     /// The desired content of the Payload.
+    
     pub payload_format: Option<String>,
     /// The canonical URL of this notification.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
     /// The Cloud PubSub topic to which this subscription publishes. Formatted as: '//pubsub.googleapis.com/projects/{project-identifier}/topics/{my-topic}'
+    
     pub topic: Option<String>,
 }
 
@@ -637,11 +740,14 @@ impl client::ResponseResult for Notification {}
 /// 
 /// * [list notifications](NotificationListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Notifications {
     /// The list of items.
+    
     pub items: Option<Vec<Notification>>,
     /// The kind of item this is. For lists of notifications, this is always storage#notifications.
+    
     pub kind: Option<String>,
 }
 
@@ -669,91 +775,127 @@ impl client::ResponseResult for Notifications {}
 /// * [update objects](ObjectUpdateCall) (request|response)
 /// * [watch all objects](ObjectWatchAllCall) (none)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Object {
     /// Access controls on the object.
+    
     pub acl: Option<Vec<ObjectAccessControl>>,
     /// The name of the bucket containing this object.
+    
     pub bucket: Option<String>,
     /// Cache-Control directive for the object data. If omitted, and the object is accessible to all anonymous users, the default will be public, max-age=3600.
     #[serde(rename="cacheControl")]
+    
     pub cache_control: Option<String>,
     /// Number of underlying components that make up this object. Components are accumulated by compose operations.
     #[serde(rename="componentCount")]
+    
     pub component_count: Option<i32>,
     /// Content-Disposition of the object data.
     #[serde(rename="contentDisposition")]
+    
     pub content_disposition: Option<String>,
     /// Content-Encoding of the object data.
     #[serde(rename="contentEncoding")]
+    
     pub content_encoding: Option<String>,
     /// Content-Language of the object data.
     #[serde(rename="contentLanguage")]
+    
     pub content_language: Option<String>,
     /// Content-Type of the object data. If an object is stored without a Content-Type, it is served as application/octet-stream.
     #[serde(rename="contentType")]
+    
     pub content_type: Option<String>,
     /// CRC32c checksum, as described in RFC 4960, Appendix B; encoded using base64 in big-endian byte order. For more information about using the CRC32c checksum, see Hashes and ETags: Best Practices.
+    
     pub crc32c: Option<String>,
     /// A timestamp in RFC 3339 format specified by the user for an object.
     #[serde(rename="customTime")]
-    pub custom_time: Option<String>,
+    
+    pub custom_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Metadata of customer-supplied encryption key, if the object is encrypted by such a key.
     #[serde(rename="customerEncryption")]
+    
     pub customer_encryption: Option<ObjectCustomerEncryption>,
     /// HTTP 1.1 Entity tag for the object.
+    
     pub etag: Option<String>,
     /// Whether an object is under event-based hold. Event-based hold is a way to retain objects until an event occurs, which is signified by the hold's release (i.e. this value is set to false). After being released (set to false), such objects will be subject to bucket-level retention (if any). One sample use case of this flag is for banks to hold loan documents for at least 3 years after loan is paid in full. Here, bucket-level retention is 3 years and the event is the loan being paid in full. In this example, these objects will be held intact for any number of years until the event has occurred (event-based hold on the object is released) and then 3 more years after that. That means retention duration of the objects begins from the moment event-based hold transitioned from true to false.
     #[serde(rename="eventBasedHold")]
+    
     pub event_based_hold: Option<bool>,
     /// The content generation of this object. Used for object versioning.
-    pub generation: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub generation: Option<i64>,
     /// The ID of the object, including the bucket name, object name, and generation number.
+    
     pub id: Option<String>,
     /// The kind of item this is. For objects, this is always storage#object.
+    
     pub kind: Option<String>,
     /// Not currently supported. Specifying the parameter causes the request to fail with status code 400 - Bad Request.
     #[serde(rename="kmsKeyName")]
+    
     pub kms_key_name: Option<String>,
     /// MD5 hash of the data; encoded using base64. For more information about using the MD5 hash, see Hashes and ETags: Best Practices.
     #[serde(rename="md5Hash")]
+    
     pub md5_hash: Option<String>,
     /// Media download link.
     #[serde(rename="mediaLink")]
+    
     pub media_link: Option<String>,
     /// User-provided metadata, in key/value pairs.
+    
     pub metadata: Option<HashMap<String, String>>,
     /// The version of the metadata for this object at this generation. Used for preconditions and for detecting changes in metadata. A metageneration number is only meaningful in the context of a particular generation of a particular object.
-    pub metageneration: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub metageneration: Option<i64>,
     /// The name of the object. Required if not specified by URL parameter.
+    
     pub name: Option<String>,
     /// The owner of the object. This will always be the uploader of the object.
+    
     pub owner: Option<ObjectOwner>,
     /// A server-determined value that specifies the earliest time that the object's retention period expires. This value is in RFC 3339 format. Note 1: This field is not provided for objects with an active event-based hold, since retention expiration is unknown until the hold is removed. Note 2: This value can be provided even when temporary hold is set (so that the user can reason about policy without having to first unset the temporary hold).
     #[serde(rename="retentionExpirationTime")]
-    pub retention_expiration_time: Option<String>,
+    
+    pub retention_expiration_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The link to this object.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
     /// Content-Length of the data in bytes.
-    pub size: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub size: Option<u64>,
     /// Storage class of the object.
     #[serde(rename="storageClass")]
+    
     pub storage_class: Option<String>,
     /// Whether an object is under temporary hold. While this flag is set to true, the object is protected against deletion and overwrites. A common use case of this flag is regulatory investigations where objects need to be retained while the investigation is ongoing. Note that unlike event-based hold, temporary hold does not impact retention expiration time of an object.
     #[serde(rename="temporaryHold")]
+    
     pub temporary_hold: Option<bool>,
     /// The creation time of the object in RFC 3339 format.
     #[serde(rename="timeCreated")]
-    pub time_created: Option<String>,
+    
+    pub time_created: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The deletion time of the object in RFC 3339 format. Will be returned if and only if this version of the object has been deleted.
     #[serde(rename="timeDeleted")]
-    pub time_deleted: Option<String>,
+    
+    pub time_deleted: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The time at which the object's storage class was last changed. When the object is initially created, it will be set to timeCreated.
     #[serde(rename="timeStorageClassUpdated")]
-    pub time_storage_class_updated: Option<String>,
+    
+    pub time_storage_class_updated: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The modification time of the object metadata in RFC 3339 format.
-    pub updated: Option<String>,
+    
+    pub updated: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
 }
 
 impl client::RequestValue for Object {}
@@ -779,13 +921,17 @@ impl client::ResponseResult for Object {}
 /// * [patch object access controls](ObjectAccessControlPatchCall) (request|response)
 /// * [update object access controls](ObjectAccessControlUpdateCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ObjectAccessControl {
     /// The name of the bucket.
+    
     pub bucket: Option<String>,
     /// The domain associated with the entity, if any.
+    
     pub domain: Option<String>,
     /// The email address associated with the entity, if any.
+    
     pub email: Option<String>,
     /// The entity holding the permission, in one of the following forms: 
     /// - user-userId 
@@ -799,27 +945,38 @@ pub struct ObjectAccessControl {
     /// - The user liz@example.com would be user-liz@example.com. 
     /// - The group example@googlegroups.com would be group-example@googlegroups.com. 
     /// - To refer to all members of the Google Apps for Business domain example.com, the entity would be domain-example.com.
+    
     pub entity: Option<String>,
     /// The ID for the entity, if any.
     #[serde(rename="entityId")]
+    
     pub entity_id: Option<String>,
     /// HTTP 1.1 Entity tag for the access-control entry.
+    
     pub etag: Option<String>,
     /// The content generation of the object, if applied to an object.
-    pub generation: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub generation: Option<i64>,
     /// The ID of the access-control entry.
+    
     pub id: Option<String>,
     /// The kind of item this is. For object access control entries, this is always storage#objectAccessControl.
+    
     pub kind: Option<String>,
     /// The name of the object, if applied to an object.
+    
     pub object: Option<String>,
     /// The project team associated with the entity, if any.
     #[serde(rename="projectTeam")]
+    
     pub project_team: Option<ObjectAccessControlProjectTeam>,
     /// The access permission for the entity.
+    
     pub role: Option<String>,
     /// The link to this access-control entry.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -838,11 +995,14 @@ impl client::ResponseResult for ObjectAccessControl {}
 /// * [list default object access controls](DefaultObjectAccessControlListCall) (response)
 /// * [list object access controls](ObjectAccessControlListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ObjectAccessControls {
     /// The list of items.
+    
     pub items: Option<Vec<ObjectAccessControl>>,
     /// The kind of item this is. For lists of object access control entries, this is always storage#objectAccessControls.
+    
     pub kind: Option<String>,
 }
 
@@ -858,16 +1018,21 @@ impl client::ResponseResult for ObjectAccessControls {}
 /// 
 /// * [list objects](ObjectListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Objects {
     /// The list of items.
+    
     pub items: Option<Vec<Object>>,
     /// The kind of item this is. For lists of objects, this is always storage#objects.
+    
     pub kind: Option<String>,
     /// The continuation token, used to page through large result sets. Provide this value in a subsequent request to return the next page of results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// The list of prefixes of objects matching-but-not-listed up to and including the requested delimiter.
+    
     pub prefixes: Option<Vec<String>>,
 }
 
@@ -886,18 +1051,25 @@ impl client::ResponseResult for Objects {}
 /// * [get iam policy objects](ObjectGetIamPolicyCall) (response)
 /// * [set iam policy objects](ObjectSetIamPolicyCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Policy {
     /// An association between a role, which comes with a set of permissions, and members who may assume that role.
+    
     pub bindings: Option<Vec<PolicyBindings>>,
     /// HTTP 1.1  Entity tag for the policy.
-    pub etag: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde::urlsafe_base64::Wrapper>")]
+    pub etag: Option<Vec<u8>>,
     /// The kind of item this is. For policies, this is always storage#policy. This field is ignored on input.
+    
     pub kind: Option<String>,
     /// The ID of the resource to which this policy belongs. Will be of the form projects/_/buckets/bucket for buckets, and projects/_/buckets/bucket/objects/object for objects. A specific generation may be specified by appending #generationNumber to the end of the object name, e.g. projects/_/buckets/my-bucket/objects/data.txt#17. The current generation can be denoted with #0. This field is ignored on input.
     #[serde(rename="resourceId")]
+    
     pub resource_id: Option<String>,
     /// The IAM policy format version.
+    
     pub version: Option<i32>,
 }
 
@@ -914,23 +1086,32 @@ impl client::ResponseResult for Policy {}
 /// 
 /// * [rewrite objects](ObjectRewriteCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct RewriteResponse {
     /// true if the copy is finished; otherwise, false if the copy is in progress. This property is always present in the response.
+    
     pub done: Option<bool>,
     /// The kind of item this is.
+    
     pub kind: Option<String>,
     /// The total size of the object being copied in bytes. This property is always present in the response.
     #[serde(rename="objectSize")]
-    pub object_size: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub object_size: Option<i64>,
     /// A resource containing the metadata for the copied-to object. This property is present in the response only when copying completes.
+    
     pub resource: Option<Object>,
     /// A token to use in subsequent requests to continue copying data. This token is present in the response only when there is more data to copy.
     #[serde(rename="rewriteToken")]
+    
     pub rewrite_token: Option<String>,
     /// The total bytes written so far, which can be used to provide a waiting user with a progress indicator. This property is always present in the response.
     #[serde(rename="totalBytesRewritten")]
-    pub total_bytes_rewritten: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub total_bytes_rewritten: Option<i64>,
 }
 
 impl client::ResponseResult for RewriteResponse {}
@@ -945,11 +1126,14 @@ impl client::ResponseResult for RewriteResponse {}
 /// 
 /// * [service account get projects](ProjectServiceAccountGetCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ServiceAccount {
     /// The ID of the notification.
+    
     pub email_address: Option<String>,
     /// The kind of item this is. For notifications, this is always storage#notification.
+    
     pub kind: Option<String>,
 }
 
@@ -966,9 +1150,11 @@ impl client::ResponseResult for ServiceAccount {}
 /// * [test iam permissions buckets](BucketTestIamPermissionCall) (response)
 /// * [test iam permissions objects](ObjectTestIamPermissionCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct TestIamPermissionsResponse {
     /// The kind of item this is.
+    
     pub kind: Option<String>,
     /// The permissions held by the caller. Permissions are always of the format storage.resource.capability, where resource is one of buckets or objects. The supported permissions are as follows:  
     /// - storage.buckets.delete — Delete bucket.  
@@ -985,6 +1171,7 @@ pub struct TestIamPermissionsResponse {
     /// - storage.objects.list — List objects.  
     /// - storage.objects.setIamPolicy — Update object IAM policy.  
     /// - storage.objects.update — Update object metadata.
+    
     pub permissions: Option<Vec<String>>,
 }
 
@@ -995,13 +1182,16 @@ impl client::ResponseResult for TestIamPermissionsResponse {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketAutoclass {
     /// Whether or not Autoclass is enabled on this bucket
+    
     pub enabled: Option<bool>,
     /// A date and time in RFC 3339 format representing the instant at which "enabled" was last toggled.
     #[serde(rename="toggleTime")]
-    pub toggle_time: Option<String>,
+    
+    pub toggle_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
 }
 
 impl client::NestedType for BucketAutoclass {}
@@ -1012,10 +1202,12 @@ impl client::Part for BucketAutoclass {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketBilling {
     /// When set to true, Requester Pays is enabled for this bucket.
     #[serde(rename="requesterPays")]
+    
     pub requester_pays: Option<bool>,
 }
 
@@ -1027,17 +1219,22 @@ impl client::Part for BucketBilling {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketCors {
     /// The value, in seconds, to return in the  Access-Control-Max-Age header used in preflight responses.
     #[serde(rename="maxAgeSeconds")]
+    
     pub max_age_seconds: Option<i32>,
     /// The list of HTTP methods on which to include CORS response headers, (GET, OPTIONS, POST, etc) Note: "*" is permitted in the list of methods, and means "any method".
+    
     pub method: Option<Vec<String>>,
     /// The list of Origins eligible to receive CORS response headers. Note: "*" is permitted in the list of origins, and means "any Origin".
+    
     pub origin: Option<Vec<String>>,
     /// The list of HTTP headers other than the simple response headers to give permission for the user-agent to share across domains.
     #[serde(rename="responseHeader")]
+    
     pub response_header: Option<Vec<String>>,
 }
 
@@ -1049,10 +1246,12 @@ impl client::Part for BucketCors {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketCustomPlacementConfig {
     /// The list of regional locations in which data is placed.
     #[serde(rename="dataLocations")]
+    
     pub data_locations: Option<Vec<String>>,
 }
 
@@ -1064,10 +1263,12 @@ impl client::Part for BucketCustomPlacementConfig {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketEncryption {
     /// A Cloud KMS key that will be used to encrypt objects inserted into this bucket, if no encryption method is specified.
     #[serde(rename="defaultKmsKeyName")]
+    
     pub default_kms_key_name: Option<String>,
 }
 
@@ -1079,16 +1280,20 @@ impl client::Part for BucketEncryption {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketIamConfiguration {
     /// The bucket's uniform bucket-level access configuration. The feature was formerly known as Bucket Policy Only. For backward compatibility, this field will be populated with identical information as the uniformBucketLevelAccess field. We recommend using the uniformBucketLevelAccess field to enable and disable the feature.
     #[serde(rename="bucketPolicyOnly")]
+    
     pub bucket_policy_only: Option<BucketIamConfigurationBucketPolicyOnly>,
     /// The bucket's Public Access Prevention configuration. Currently, 'inherited' and 'enforced' are supported.
     #[serde(rename="publicAccessPrevention")]
+    
     pub public_access_prevention: Option<String>,
     /// The bucket's uniform bucket-level access configuration.
     #[serde(rename="uniformBucketLevelAccess")]
+    
     pub uniform_bucket_level_access: Option<BucketIamConfigurationUniformBucketLevelAccess>,
 }
 
@@ -1100,13 +1305,16 @@ impl client::Part for BucketIamConfiguration {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketIamConfigurationBucketPolicyOnly {
     /// If set, access is controlled only by bucket-level or above IAM policies.
+    
     pub enabled: Option<bool>,
     /// The deadline for changing iamConfiguration.bucketPolicyOnly.enabled from true to false in RFC 3339 format. iamConfiguration.bucketPolicyOnly.enabled may be changed from true to false until the locked time, after which the field is immutable.
     #[serde(rename="lockedTime")]
-    pub locked_time: Option<String>,
+    
+    pub locked_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
 }
 
 impl client::NestedType for BucketIamConfigurationBucketPolicyOnly {}
@@ -1117,13 +1325,16 @@ impl client::Part for BucketIamConfigurationBucketPolicyOnly {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketIamConfigurationUniformBucketLevelAccess {
     /// If set, access is controlled only by bucket-level or above IAM policies.
+    
     pub enabled: Option<bool>,
     /// The deadline for changing iamConfiguration.uniformBucketLevelAccess.enabled from true to false in RFC 3339  format. iamConfiguration.uniformBucketLevelAccess.enabled may be changed from true to false until the locked time, after which the field is immutable.
     #[serde(rename="lockedTime")]
-    pub locked_time: Option<String>,
+    
+    pub locked_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
 }
 
 impl client::NestedType for BucketIamConfigurationUniformBucketLevelAccess {}
@@ -1134,9 +1345,11 @@ impl client::Part for BucketIamConfigurationUniformBucketLevelAccess {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketLifecycle {
     /// A lifecycle management rule, which is made of an action to take and the condition(s) under which the action will be taken.
+    
     pub rule: Option<Vec<BucketLifecycleRule>>,
 }
 
@@ -1148,11 +1361,14 @@ impl client::Part for BucketLifecycle {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketLifecycleRule {
     /// The action to take.
+    
     pub action: Option<BucketLifecycleRuleAction>,
     /// The condition(s) under which the action will be taken.
+    
     pub condition: Option<BucketLifecycleRuleCondition>,
 }
 
@@ -1164,13 +1380,16 @@ impl client::Part for BucketLifecycleRule {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketLifecycleRuleAction {
     /// Target storage class. Required iff the type of the action is SetStorageClass.
     #[serde(rename="storageClass")]
+    
     pub storage_class: Option<String>,
     /// Type of the action. Currently, only Delete and SetStorageClass are supported.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -1182,36 +1401,47 @@ impl client::Part for BucketLifecycleRuleAction {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketLifecycleRuleCondition {
     /// Age of an object (in days). This condition is satisfied when an object reaches the specified age.
+    
     pub age: Option<i32>,
     /// A date in RFC 3339 format with only the date part (for instance, "2013-01-15"). This condition is satisfied when an object is created before midnight of the specified date in UTC.
     #[serde(rename="createdBefore")]
-    pub created_before: Option<String>,
+    
+    pub created_before: Option<client::chrono::NaiveDate>,
     /// A date in RFC 3339 format with only the date part (for instance, "2013-01-15"). This condition is satisfied when the custom time on an object is before this date in UTC.
     #[serde(rename="customTimeBefore")]
-    pub custom_time_before: Option<String>,
+    
+    pub custom_time_before: Option<client::chrono::NaiveDate>,
     /// Number of days elapsed since the user-specified timestamp set on an object. The condition is satisfied if the days elapsed is at least this number. If no custom timestamp is specified on an object, the condition does not apply.
     #[serde(rename="daysSinceCustomTime")]
+    
     pub days_since_custom_time: Option<i32>,
     /// Number of days elapsed since the noncurrent timestamp of an object. The condition is satisfied if the days elapsed is at least this number. This condition is relevant only for versioned objects. The value of the field must be a nonnegative integer. If it's zero, the object version will become eligible for Lifecycle action as soon as it becomes noncurrent.
     #[serde(rename="daysSinceNoncurrentTime")]
+    
     pub days_since_noncurrent_time: Option<i32>,
     /// Relevant only for versioned objects. If the value is true, this condition matches live objects; if the value is false, it matches archived objects.
     #[serde(rename="isLive")]
+    
     pub is_live: Option<bool>,
     /// A regular expression that satisfies the RE2 syntax. This condition is satisfied when the name of the object matches the RE2 pattern. Note: This feature is currently in the "Early Access" launch stage and is only available to a whitelisted set of users; that means that this feature may be changed in backward-incompatible ways and that it is not guaranteed to be released.
     #[serde(rename="matchesPattern")]
+    
     pub matches_pattern: Option<String>,
     /// Objects having any of the storage classes specified by this condition will be matched. Values include MULTI_REGIONAL, REGIONAL, NEARLINE, COLDLINE, ARCHIVE, STANDARD, and DURABLE_REDUCED_AVAILABILITY.
     #[serde(rename="matchesStorageClass")]
+    
     pub matches_storage_class: Option<Vec<String>>,
     /// A date in RFC 3339 format with only the date part (for instance, "2013-01-15"). This condition is satisfied when the noncurrent time on an object is before this date in UTC. This condition is relevant only for versioned objects.
     #[serde(rename="noncurrentTimeBefore")]
-    pub noncurrent_time_before: Option<String>,
+    
+    pub noncurrent_time_before: Option<client::chrono::NaiveDate>,
     /// Relevant only for versioned objects. If the value is N, this condition is satisfied when there are at least N versions (including the live version) newer than this version of the object.
     #[serde(rename="numNewerVersions")]
+    
     pub num_newer_versions: Option<i32>,
 }
 
@@ -1223,13 +1453,16 @@ impl client::Part for BucketLifecycleRuleCondition {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketLogging {
     /// The destination bucket where the current bucket's logs should be placed.
     #[serde(rename="logBucket")]
+    
     pub log_bucket: Option<String>,
     /// A prefix for log object names.
     #[serde(rename="logObjectPrefix")]
+    
     pub log_object_prefix: Option<String>,
 }
 
@@ -1241,12 +1474,15 @@ impl client::Part for BucketLogging {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketOwner {
     /// The entity, in the form project-owner-projectId.
+    
     pub entity: Option<String>,
     /// The ID for the entity.
     #[serde(rename="entityId")]
+    
     pub entity_id: Option<String>,
 }
 
@@ -1258,17 +1494,22 @@ impl client::Part for BucketOwner {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketRetentionPolicy {
     /// Server-determined value that indicates the time from which policy was enforced and effective. This value is in RFC 3339 format.
     #[serde(rename="effectiveTime")]
-    pub effective_time: Option<String>,
+    
+    pub effective_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Once locked, an object retention policy cannot be modified.
     #[serde(rename="isLocked")]
+    
     pub is_locked: Option<bool>,
     /// The duration in seconds that objects need to be retained. Retention duration must be greater than zero and less than 100 years. Note that enforcement of retention periods less than a day is not guaranteed. Such periods should only be used for testing purposes.
     #[serde(rename="retentionPeriod")]
-    pub retention_period: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub retention_period: Option<i64>,
 }
 
 impl client::NestedType for BucketRetentionPolicy {}
@@ -1279,9 +1520,11 @@ impl client::Part for BucketRetentionPolicy {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketVersioning {
     /// While set to true, versioning is fully enabled for this bucket.
+    
     pub enabled: Option<bool>,
 }
 
@@ -1293,13 +1536,16 @@ impl client::Part for BucketVersioning {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketWebsite {
     /// If the requested object path is missing, the service will ensure the path has a trailing '/', append this suffix, and attempt to retrieve the resulting object. This allows the creation of index.html objects to represent directory pages.
     #[serde(rename="mainPageSuffix")]
+    
     pub main_page_suffix: Option<String>,
     /// If the requested object path is missing, and any mainPageSuffix object is missing, if applicable, the service will return the named object from this bucket as the content for a 404 Not Found result.
     #[serde(rename="notFoundPage")]
+    
     pub not_found_page: Option<String>,
 }
 
@@ -1311,12 +1557,15 @@ impl client::Part for BucketWebsite {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct BucketAccessControlProjectTeam {
     /// The project number.
     #[serde(rename="projectNumber")]
+    
     pub project_number: Option<String>,
     /// The team.
+    
     pub team: Option<String>,
 }
 
@@ -1328,14 +1577,19 @@ impl client::Part for BucketAccessControlProjectTeam {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ComposeRequestSourceObjects {
     /// The generation of this object to use as the source.
-    pub generation: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub generation: Option<i64>,
     /// The source object's name. All source objects must reside in the same bucket.
+    
     pub name: Option<String>,
     /// Conditions that must be met for this operation to execute.
     #[serde(rename="objectPreconditions")]
+    
     pub object_preconditions: Option<ComposeRequestSourceObjectsObjectPreconditions>,
 }
 
@@ -1347,11 +1601,14 @@ impl client::Part for ComposeRequestSourceObjects {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ComposeRequestSourceObjectsObjectPreconditions {
     /// Only perform the composition if the generation of the source object that would be used matches this value. If this value and a generation are both specified, they must be the same value or the call will fail.
     #[serde(rename="ifGenerationMatch")]
-    pub if_generation_match: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub if_generation_match: Option<i64>,
 }
 
 impl client::NestedType for ComposeRequestSourceObjectsObjectPreconditions {}
@@ -1362,13 +1619,16 @@ impl client::Part for ComposeRequestSourceObjectsObjectPreconditions {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ObjectCustomerEncryption {
     /// The encryption algorithm.
     #[serde(rename="encryptionAlgorithm")]
+    
     pub encryption_algorithm: Option<String>,
     /// SHA256 hash value of the encryption key.
     #[serde(rename="keySha256")]
+    
     pub key_sha256: Option<String>,
 }
 
@@ -1380,12 +1640,15 @@ impl client::Part for ObjectCustomerEncryption {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ObjectOwner {
     /// The entity, in the form user-userId.
+    
     pub entity: Option<String>,
     /// The ID for the entity.
     #[serde(rename="entityId")]
+    
     pub entity_id: Option<String>,
 }
 
@@ -1397,12 +1660,15 @@ impl client::Part for ObjectOwner {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ObjectAccessControlProjectTeam {
     /// The project number.
     #[serde(rename="projectNumber")]
+    
     pub project_number: Option<String>,
     /// The team.
+    
     pub team: Option<String>,
 }
 
@@ -1414,9 +1680,11 @@ impl client::Part for ObjectAccessControlProjectTeam {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct PolicyBindings {
     /// The condition that is associated with this binding. NOTE: an unsatisfied condition will not allow user access via current binding. Different bindings, including their conditions, are examined independently.
+    
     pub condition: Option<Expr>,
     /// A collection of identifiers for members who may assume the provided role. Recognized identifiers are as follows:  
     /// - allUsers — A special identifier that represents anyone on the internet; with or without a Google account.  
@@ -1428,6 +1696,7 @@ pub struct PolicyBindings {
     /// - projectOwner:projectid — Owners of the given project. For example, projectOwner:my-example-project  
     /// - projectEditor:projectid — Editors of the given project. For example, projectEditor:my-example-project  
     /// - projectViewer:projectid — Viewers of the given project. For example, projectViewer:my-example-project
+    
     pub members: Option<Vec<String>>,
     /// The role to which members belong. Two types of roles are supported: new IAM roles, which grant permissions that do not map directly to those provided by ACLs, and legacy IAM roles, which do map directly to ACL permissions. All roles are of the format roles/storage.specificRole.
     /// The new IAM roles are:  
@@ -1440,6 +1709,7 @@ pub struct PolicyBindings {
     /// - roles/storage.legacyBucketReader — Read access to buckets with object listing. Equivalent to an ACL entry on a bucket with the READER role.  
     /// - roles/storage.legacyBucketWriter — Read access to buckets with object listing/creation/deletion. Equivalent to an ACL entry on a bucket with the WRITER role.  
     /// - roles/storage.legacyBucketOwner — Read and write access to existing buckets with object listing/creation/deletion. Equivalent to an ACL entry on a bucket with the OWNER role.
+    
     pub role: Option<String>,
 }
 
@@ -1453,7 +1723,7 @@ impl client::Part for PolicyBindings {}
 // #################
 
 /// A builder providing access to all methods supported on *bucketAccessControl* resources.
-/// It is not used directly, but through the `Storage` hub.
+/// It is not used directly, but through the [`Storage`] hub.
 ///
 /// # Example
 ///
@@ -1466,7 +1736,7 @@ impl client::Part for PolicyBindings {}
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -1622,7 +1892,7 @@ impl<'a, S> BucketAccessControlMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *bucket* resources.
-/// It is not used directly, but through the `Storage` hub.
+/// It is not used directly, but through the [`Storage`] hub.
 ///
 /// # Example
 ///
@@ -1635,7 +1905,7 @@ impl<'a, S> BucketAccessControlMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -1777,11 +2047,11 @@ impl<'a, S> BucketMethods<'a, S> {
     ///
     /// * `bucket` - Name of a bucket.
     /// * `ifMetagenerationMatch` - Makes the operation conditional on whether bucket's current metageneration matches the given value.
-    pub fn lock_retention_policy(&self, bucket: &str, if_metageneration_match: &str) -> BucketLockRetentionPolicyCall<'a, S> {
+    pub fn lock_retention_policy(&self, bucket: &str, if_metageneration_match: i64) -> BucketLockRetentionPolicyCall<'a, S> {
         BucketLockRetentionPolicyCall {
             hub: self.hub,
             _bucket: bucket.to_string(),
-            _if_metageneration_match: if_metageneration_match.to_string(),
+            _if_metageneration_match: if_metageneration_match,
             _user_project: Default::default(),
             _provisional_user_project: Default::default(),
             _delegate: Default::default(),
@@ -1888,7 +2158,7 @@ impl<'a, S> BucketMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *channel* resources.
-/// It is not used directly, but through the `Storage` hub.
+/// It is not used directly, but through the [`Storage`] hub.
 ///
 /// # Example
 ///
@@ -1901,7 +2171,7 @@ impl<'a, S> BucketMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -1946,7 +2216,7 @@ impl<'a, S> ChannelMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *defaultObjectAccessControl* resources.
-/// It is not used directly, but through the `Storage` hub.
+/// It is not used directly, but through the [`Storage`] hub.
 ///
 /// # Example
 ///
@@ -1959,7 +2229,7 @@ impl<'a, S> ChannelMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2117,7 +2387,7 @@ impl<'a, S> DefaultObjectAccessControlMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *notification* resources.
-/// It is not used directly, but through the `Storage` hub.
+/// It is not used directly, but through the [`Storage`] hub.
 ///
 /// # Example
 ///
@@ -2130,7 +2400,7 @@ impl<'a, S> DefaultObjectAccessControlMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2240,7 +2510,7 @@ impl<'a, S> NotificationMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *objectAccessControl* resources.
-/// It is not used directly, but through the `Storage` hub.
+/// It is not used directly, but through the [`Storage`] hub.
 ///
 /// # Example
 ///
@@ -2253,7 +2523,7 @@ impl<'a, S> NotificationMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2427,7 +2697,7 @@ impl<'a, S> ObjectAccessControlMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *object* resources.
-/// It is not used directly, but through the `Storage` hub.
+/// It is not used directly, but through the [`Storage`] hub.
 ///
 /// # Example
 ///
@@ -2440,7 +2710,7 @@ impl<'a, S> ObjectAccessControlMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2846,7 +3116,7 @@ impl<'a, S> ObjectMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *project* resources.
-/// It is not used directly, but through the `Storage` hub.
+/// It is not used directly, but through the [`Storage`] hub.
 ///
 /// # Example
 ///
@@ -2859,7 +3129,7 @@ impl<'a, S> ObjectMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3018,7 +3288,7 @@ impl<'a, S> ProjectMethods<'a, S> {
 /// Permanently deletes the ACL entry for the specified entity on the specified bucket.
 ///
 /// A builder for the *delete* method supported by a *bucketAccessControl* resource.
-/// It is not used directly, but through a `BucketAccessControlMethods` instance.
+/// It is not used directly, but through a [`BucketAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -3030,7 +3300,7 @@ impl<'a, S> ProjectMethods<'a, S> {
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3057,14 +3327,14 @@ pub struct BucketAccessControlDeleteCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketAccessControlDeleteCall<'a, S> {}
 
 impl<'a, S> BucketAccessControlDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -3075,74 +3345,59 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.bucketAccessControls.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("entity", self._entity.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["bucket", "entity", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("entity", self._entity);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "b/{bucket}/acl/{entity}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{entity}", "entity")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["entity", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["entity", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -3150,21 +3405,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -3180,7 +3441,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -3238,7 +3499,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketAccessControlDeleteCall<'a, S> {
@@ -3271,25 +3533,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketAccessControlDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketAccessControlDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketAccessControlDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketAccessControlDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -3298,7 +3571,7 @@ where
 /// Returns the ACL entry for the specified entity on the specified bucket.
 ///
 /// A builder for the *get* method supported by a *bucketAccessControl* resource.
-/// It is not used directly, but through a `BucketAccessControlMethods` instance.
+/// It is not used directly, but through a [`BucketAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -3310,7 +3583,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3337,14 +3610,14 @@ pub struct BucketAccessControlGetCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketAccessControlGetCall<'a, S> {}
 
 impl<'a, S> BucketAccessControlGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -3355,75 +3628,60 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, BucketAccessControl)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.bucketAccessControls.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("entity", self._entity.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "entity", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("entity", self._entity);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/acl/{entity}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{entity}", "entity")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["entity", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["entity", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -3431,21 +3689,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -3461,7 +3725,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -3529,7 +3793,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketAccessControlGetCall<'a, S> {
@@ -3562,25 +3827,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketAccessControlGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketAccessControlGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketAccessControlGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketAccessControlGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -3589,7 +3865,7 @@ where
 /// Creates a new ACL entry on the specified bucket.
 ///
 /// A builder for the *insert* method supported by a *bucketAccessControl* resource.
-/// It is not used directly, but through a `BucketAccessControlMethods` instance.
+/// It is not used directly, but through a [`BucketAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -3602,7 +3878,7 @@ where
 /// use storage1::api::BucketAccessControl;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3634,14 +3910,14 @@ pub struct BucketAccessControlInsertCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketAccessControlInsertCall<'a, S> {}
 
 impl<'a, S> BucketAccessControlInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -3652,64 +3928,49 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, BucketAccessControl)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.bucketAccessControls.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/acl";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -3723,14 +3984,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -3739,23 +4000,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -3771,7 +4038,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -3838,7 +4105,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketAccessControlInsertCall<'a, S> {
@@ -3871,25 +4139,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketAccessControlInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketAccessControlInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketAccessControlInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketAccessControlInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -3898,7 +4177,7 @@ where
 /// Retrieves ACL entries on the specified bucket.
 ///
 /// A builder for the *list* method supported by a *bucketAccessControl* resource.
-/// It is not used directly, but through a `BucketAccessControlMethods` instance.
+/// It is not used directly, but through a [`BucketAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -3910,7 +4189,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3936,14 +4215,14 @@ pub struct BucketAccessControlListCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketAccessControlListCall<'a, S> {}
 
 impl<'a, S> BucketAccessControlListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -3954,74 +4233,59 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, BucketAccessControls)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.bucketAccessControls.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/acl";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -4029,21 +4293,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -4059,7 +4329,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -4117,7 +4387,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketAccessControlListCall<'a, S> {
@@ -4150,25 +4421,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketAccessControlListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketAccessControlListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketAccessControlListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketAccessControlListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -4177,7 +4459,7 @@ where
 /// Patches an ACL entry on the specified bucket.
 ///
 /// A builder for the *patch* method supported by a *bucketAccessControl* resource.
-/// It is not used directly, but through a `BucketAccessControlMethods` instance.
+/// It is not used directly, but through a [`BucketAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -4190,7 +4472,7 @@ where
 /// use storage1::api::BucketAccessControl;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4223,14 +4505,14 @@ pub struct BucketAccessControlPatchCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketAccessControlPatchCall<'a, S> {}
 
 impl<'a, S> BucketAccessControlPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -4241,65 +4523,50 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, BucketAccessControl)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.bucketAccessControls.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("entity", self._entity.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "entity", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("entity", self._entity);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/acl/{entity}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{entity}", "entity")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["entity", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["entity", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -4313,14 +4580,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -4329,23 +4596,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -4361,7 +4634,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -4438,7 +4711,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketAccessControlPatchCall<'a, S> {
@@ -4471,25 +4745,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketAccessControlPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketAccessControlPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketAccessControlPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketAccessControlPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -4498,7 +4783,7 @@ where
 /// Updates an ACL entry on the specified bucket.
 ///
 /// A builder for the *update* method supported by a *bucketAccessControl* resource.
-/// It is not used directly, but through a `BucketAccessControlMethods` instance.
+/// It is not used directly, but through a [`BucketAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -4511,7 +4796,7 @@ where
 /// use storage1::api::BucketAccessControl;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4544,14 +4829,14 @@ pub struct BucketAccessControlUpdateCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketAccessControlUpdateCall<'a, S> {}
 
 impl<'a, S> BucketAccessControlUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -4562,65 +4847,50 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, BucketAccessControl)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.bucketAccessControls.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("entity", self._entity.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "entity", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("entity", self._entity);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/acl/{entity}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{entity}", "entity")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["entity", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["entity", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -4634,14 +4904,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -4650,23 +4920,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -4682,7 +4958,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -4759,7 +5035,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketAccessControlUpdateCall<'a, S> {
@@ -4792,25 +5069,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketAccessControlUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketAccessControlUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketAccessControlUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketAccessControlUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -4819,7 +5107,7 @@ where
 /// Permanently deletes an empty bucket.
 ///
 /// A builder for the *delete* method supported by a *bucket* resource.
-/// It is not used directly, but through a `BucketMethods` instance.
+/// It is not used directly, but through a [`BucketMethods`] instance.
 ///
 /// # Example
 ///
@@ -4831,7 +5119,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4845,8 +5133,8 @@ where
 /// let result = hub.buckets().delete("bucket")
 ///              .user_project("sed")
 ///              .provisional_user_project("takimata")
-///              .if_metageneration_not_match("dolores")
-///              .if_metageneration_match("gubergren")
+///              .if_metageneration_not_match(-19)
+///              .if_metageneration_match(-62)
 ///              .doit().await;
 /// # }
 /// ```
@@ -4857,18 +5145,18 @@ pub struct BucketDeleteCall<'a, S>
     _bucket: String,
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
-    _if_metageneration_not_match: Option<String>,
-    _if_metageneration_match: Option<String>,
+    _if_metageneration_not_match: Option<i64>,
+    _if_metageneration_match: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketDeleteCall<'a, S> {}
 
 impl<'a, S> BucketDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -4879,79 +5167,64 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.buckets.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_not_match {
-            params.push(("ifMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_match {
-            params.push(("ifMetagenerationMatch", value.to_string()));
-        }
+
         for &field in ["bucket", "userProject", "provisionalUserProject", "ifMetagenerationNotMatch", "ifMetagenerationMatch"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._if_metageneration_not_match.as_ref() {
+            params.push("ifMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_match.as_ref() {
+            params.push("ifMetagenerationMatch", value.to_string());
         }
 
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "b/{bucket}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -4959,21 +5232,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -4989,7 +5268,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5037,21 +5316,22 @@ where
     /// If set, only deletes the bucket if its metageneration does not match this value.
     ///
     /// Sets the *if metageneration not match* query property to the given value.
-    pub fn if_metageneration_not_match(mut self, new_value: &str) -> BucketDeleteCall<'a, S> {
-        self._if_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_metageneration_not_match(mut self, new_value: i64) -> BucketDeleteCall<'a, S> {
+        self._if_metageneration_not_match = Some(new_value);
         self
     }
     /// If set, only deletes the bucket if its metageneration matches this value.
     ///
     /// Sets the *if metageneration match* query property to the given value.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> BucketDeleteCall<'a, S> {
-        self._if_metageneration_match = Some(new_value.to_string());
+    pub fn if_metageneration_match(mut self, new_value: i64) -> BucketDeleteCall<'a, S> {
+        self._if_metageneration_match = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketDeleteCall<'a, S> {
@@ -5084,25 +5364,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5111,7 +5402,7 @@ where
 /// Returns metadata for the specified bucket.
 ///
 /// A builder for the *get* method supported by a *bucket* resource.
-/// It is not used directly, but through a `BucketMethods` instance.
+/// It is not used directly, but through a [`BucketMethods`] instance.
 ///
 /// # Example
 ///
@@ -5123,7 +5414,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5138,8 +5429,8 @@ where
 ///              .user_project("accusam")
 ///              .provisional_user_project("voluptua.")
 ///              .projection("dolore")
-///              .if_metageneration_not_match("dolore")
-///              .if_metageneration_match("dolore")
+///              .if_metageneration_not_match(-34)
+///              .if_metageneration_match(-34)
 ///              .doit().await;
 /// # }
 /// ```
@@ -5151,18 +5442,18 @@ pub struct BucketGetCall<'a, S>
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
     _projection: Option<String>,
-    _if_metageneration_not_match: Option<String>,
-    _if_metageneration_match: Option<String>,
+    _if_metageneration_not_match: Option<i64>,
+    _if_metageneration_match: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketGetCall<'a, S> {}
 
 impl<'a, S> BucketGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -5173,83 +5464,68 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Bucket)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.buckets.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(8 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_not_match {
-            params.push(("ifMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_match {
-            params.push(("ifMetagenerationMatch", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "userProject", "provisionalUserProject", "projection", "ifMetagenerationNotMatch", "ifMetagenerationMatch"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(8 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._if_metageneration_not_match.as_ref() {
+            params.push("ifMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_match.as_ref() {
+            params.push("ifMetagenerationMatch", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -5257,21 +5533,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -5287,7 +5569,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5352,21 +5634,22 @@ where
     /// Makes the return of the bucket metadata conditional on whether the bucket's current metageneration does not match the given value.
     ///
     /// Sets the *if metageneration not match* query property to the given value.
-    pub fn if_metageneration_not_match(mut self, new_value: &str) -> BucketGetCall<'a, S> {
-        self._if_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_metageneration_not_match(mut self, new_value: i64) -> BucketGetCall<'a, S> {
+        self._if_metageneration_not_match = Some(new_value);
         self
     }
     /// Makes the return of the bucket metadata conditional on whether the bucket's current metageneration matches the given value.
     ///
     /// Sets the *if metageneration match* query property to the given value.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> BucketGetCall<'a, S> {
-        self._if_metageneration_match = Some(new_value.to_string());
+    pub fn if_metageneration_match(mut self, new_value: i64) -> BucketGetCall<'a, S> {
+        self._if_metageneration_match = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketGetCall<'a, S> {
@@ -5399,25 +5682,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5426,7 +5720,7 @@ where
 /// Returns an IAM policy for the specified bucket.
 ///
 /// A builder for the *getIamPolicy* method supported by a *bucket* resource.
-/// It is not used directly, but through a `BucketMethods` instance.
+/// It is not used directly, but through a [`BucketMethods`] instance.
 ///
 /// # Example
 ///
@@ -5438,7 +5732,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5466,14 +5760,14 @@ pub struct BucketGetIamPolicyCall<'a, S>
     _options_requested_policy_version: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketGetIamPolicyCall<'a, S> {}
 
 impl<'a, S> BucketGetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -5484,77 +5778,62 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.buckets.getIamPolicy",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._options_requested_policy_version {
-            params.push(("optionsRequestedPolicyVersion", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "userProject", "provisionalUserProject", "optionsRequestedPolicyVersion"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._options_requested_policy_version.as_ref() {
+            params.push("optionsRequestedPolicyVersion", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/iam";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -5562,21 +5841,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -5592,7 +5877,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5657,7 +5942,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketGetIamPolicyCall<'a, S> {
@@ -5690,25 +5976,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketGetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketGetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketGetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketGetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5717,7 +6014,7 @@ where
 /// Creates a new bucket.
 ///
 /// A builder for the *insert* method supported by a *bucket* resource.
-/// It is not used directly, but through a `BucketMethods` instance.
+/// It is not used directly, but through a [`BucketMethods`] instance.
 ///
 /// # Example
 ///
@@ -5730,7 +6027,7 @@ where
 /// use storage1::api::Bucket;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5768,14 +6065,14 @@ pub struct BucketInsertCall<'a, S>
     _predefined_acl: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketInsertCall<'a, S> {}
 
 impl<'a, S> BucketInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -5786,52 +6083,51 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Bucket)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.buckets.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(9 + self._additional_params.len());
-        params.push(("project", self._project.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._predefined_default_object_acl {
-            params.push(("predefinedDefaultObjectAcl", value.to_string()));
-        }
-        if let Some(value) = self._predefined_acl {
-            params.push(("predefinedAcl", value.to_string()));
-        }
+
         for &field in ["alt", "project", "userProject", "provisionalUserProject", "projection", "predefinedDefaultObjectAcl", "predefinedAcl"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(9 + self._additional_params.len());
+        params.push("project", self._project);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._predefined_default_object_acl.as_ref() {
+            params.push("predefinedDefaultObjectAcl", value);
+        }
+        if let Some(value) = self._predefined_acl.as_ref() {
+            params.push("predefinedAcl", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -5845,14 +6141,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -5861,23 +6157,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -5893,7 +6195,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5981,7 +6283,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketInsertCall<'a, S> {
@@ -6014,25 +6317,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -6041,7 +6355,7 @@ where
 /// Retrieves a list of buckets for a given project.
 ///
 /// A builder for the *list* method supported by a *bucket* resource.
-/// It is not used directly, but through a `BucketMethods` instance.
+/// It is not used directly, but through a [`BucketMethods`] instance.
 ///
 /// # Example
 ///
@@ -6053,7 +6367,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -6087,14 +6401,14 @@ pub struct BucketListCall<'a, S>
     _max_results: Option<u32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketListCall<'a, S> {}
 
 impl<'a, S> BucketListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -6105,65 +6419,64 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Buckets)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.buckets.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(9 + self._additional_params.len());
-        params.push(("project", self._project.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._prefix {
-            params.push(("prefix", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
+
         for &field in ["alt", "project", "userProject", "provisionalUserProject", "projection", "prefix", "pageToken", "maxResults"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(9 + self._additional_params.len());
+        params.push("project", self._project);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._prefix.as_ref() {
+            params.push("prefix", value);
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -6171,21 +6484,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -6201,7 +6520,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -6287,7 +6606,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketListCall<'a, S> {
@@ -6320,25 +6640,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -6347,7 +6678,7 @@ where
 /// Locks retention policy on a bucket.
 ///
 /// A builder for the *lockRetentionPolicy* method supported by a *bucket* resource.
-/// It is not used directly, but through a `BucketMethods` instance.
+/// It is not used directly, but through a [`BucketMethods`] instance.
 ///
 /// # Example
 ///
@@ -6359,7 +6690,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -6370,7 +6701,7 @@ where
 /// // You can configure optional parameters by calling the respective setters at will, and
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
-/// let result = hub.buckets().lock_retention_policy("bucket", "ifMetagenerationMatch")
+/// let result = hub.buckets().lock_retention_policy("bucket", -7)
 ///              .user_project("sed")
 ///              .provisional_user_project("diam")
 ///              .doit().await;
@@ -6381,19 +6712,19 @@ pub struct BucketLockRetentionPolicyCall<'a, S>
 
     hub: &'a Storage<S>,
     _bucket: String,
-    _if_metageneration_match: String,
+    _if_metageneration_match: i64,
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketLockRetentionPolicyCall<'a, S> {}
 
 impl<'a, S> BucketLockRetentionPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -6404,75 +6735,60 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Bucket)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.buckets.lockRetentionPolicy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("ifMetagenerationMatch", self._if_metageneration_match.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "ifMetagenerationMatch", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("ifMetagenerationMatch", self._if_metageneration_match.to_string());
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/lockRetentionPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -6480,21 +6796,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -6510,7 +6832,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -6557,8 +6879,8 @@ where
     ///
     /// Even though the property as already been set when instantiating this call,
     /// we provide this method for API completeness.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> BucketLockRetentionPolicyCall<'a, S> {
-        self._if_metageneration_match = new_value.to_string();
+    pub fn if_metageneration_match(mut self, new_value: i64) -> BucketLockRetentionPolicyCall<'a, S> {
+        self._if_metageneration_match = new_value;
         self
     }
     /// The project to be billed for this request. Required for Requester Pays buckets.
@@ -6578,7 +6900,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketLockRetentionPolicyCall<'a, S> {
@@ -6611,25 +6934,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketLockRetentionPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketLockRetentionPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketLockRetentionPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketLockRetentionPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -6638,7 +6972,7 @@ where
 /// Patches a bucket. Changes to the bucket will be readable immediately after writing, but configuration changes may take time to propagate.
 ///
 /// A builder for the *patch* method supported by a *bucket* resource.
-/// It is not used directly, but through a `BucketMethods` instance.
+/// It is not used directly, but through a [`BucketMethods`] instance.
 ///
 /// # Example
 ///
@@ -6651,7 +6985,7 @@ where
 /// use storage1::api::Bucket;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -6673,8 +7007,8 @@ where
 ///              .projection("sed")
 ///              .predefined_default_object_acl("no")
 ///              .predefined_acl("et")
-///              .if_metageneration_not_match("elitr")
-///              .if_metageneration_match("sed")
+///              .if_metageneration_not_match(-94)
+///              .if_metageneration_match(-80)
 ///              .doit().await;
 /// # }
 /// ```
@@ -6689,18 +7023,18 @@ pub struct BucketPatchCall<'a, S>
     _projection: Option<String>,
     _predefined_default_object_acl: Option<String>,
     _predefined_acl: Option<String>,
-    _if_metageneration_not_match: Option<String>,
-    _if_metageneration_match: Option<String>,
+    _if_metageneration_not_match: Option<i64>,
+    _if_metageneration_match: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketPatchCall<'a, S> {}
 
 impl<'a, S> BucketPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -6711,79 +7045,64 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Bucket)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.buckets.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(11 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._predefined_default_object_acl {
-            params.push(("predefinedDefaultObjectAcl", value.to_string()));
-        }
-        if let Some(value) = self._predefined_acl {
-            params.push(("predefinedAcl", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_not_match {
-            params.push(("ifMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_match {
-            params.push(("ifMetagenerationMatch", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "userProject", "provisionalUserProject", "projection", "predefinedDefaultObjectAcl", "predefinedAcl", "ifMetagenerationNotMatch", "ifMetagenerationMatch"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(11 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._predefined_default_object_acl.as_ref() {
+            params.push("predefinedDefaultObjectAcl", value);
+        }
+        if let Some(value) = self._predefined_acl.as_ref() {
+            params.push("predefinedAcl", value);
+        }
+        if let Some(value) = self._if_metageneration_not_match.as_ref() {
+            params.push("ifMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_match.as_ref() {
+            params.push("ifMetagenerationMatch", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -6797,14 +7116,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -6813,23 +7132,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -6845,7 +7170,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -6933,21 +7258,22 @@ where
     /// Makes the return of the bucket metadata conditional on whether the bucket's current metageneration does not match the given value.
     ///
     /// Sets the *if metageneration not match* query property to the given value.
-    pub fn if_metageneration_not_match(mut self, new_value: &str) -> BucketPatchCall<'a, S> {
-        self._if_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_metageneration_not_match(mut self, new_value: i64) -> BucketPatchCall<'a, S> {
+        self._if_metageneration_not_match = Some(new_value);
         self
     }
     /// Makes the return of the bucket metadata conditional on whether the bucket's current metageneration matches the given value.
     ///
     /// Sets the *if metageneration match* query property to the given value.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> BucketPatchCall<'a, S> {
-        self._if_metageneration_match = Some(new_value.to_string());
+    pub fn if_metageneration_match(mut self, new_value: i64) -> BucketPatchCall<'a, S> {
+        self._if_metageneration_match = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketPatchCall<'a, S> {
@@ -6980,25 +7306,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7007,7 +7344,7 @@ where
 /// Updates an IAM policy for the specified bucket.
 ///
 /// A builder for the *setIamPolicy* method supported by a *bucket* resource.
-/// It is not used directly, but through a `BucketMethods` instance.
+/// It is not used directly, but through a [`BucketMethods`] instance.
 ///
 /// # Example
 ///
@@ -7020,7 +7357,7 @@ where
 /// use storage1::api::Policy;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7052,14 +7389,14 @@ pub struct BucketSetIamPolicyCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketSetIamPolicyCall<'a, S> {}
 
 impl<'a, S> BucketSetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7070,64 +7407,49 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.buckets.setIamPolicy",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/iam";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -7141,14 +7463,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -7157,23 +7479,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -7189,7 +7517,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -7256,7 +7584,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketSetIamPolicyCall<'a, S> {
@@ -7289,25 +7618,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketSetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketSetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketSetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketSetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7316,7 +7656,7 @@ where
 /// Tests a set of permissions on the given bucket to see which, if any, are held by the caller.
 ///
 /// A builder for the *testIamPermissions* method supported by a *bucket* resource.
-/// It is not used directly, but through a `BucketMethods` instance.
+/// It is not used directly, but through a [`BucketMethods`] instance.
 ///
 /// # Example
 ///
@@ -7328,7 +7668,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7355,14 +7695,14 @@ pub struct BucketTestIamPermissionCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketTestIamPermissionCall<'a, S> {}
 
 impl<'a, S> BucketTestIamPermissionCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7373,79 +7713,64 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, TestIamPermissionsResponse)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.buckets.testIamPermissions",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if self._permissions.len() > 0 {
-            for f in self._permissions.iter() {
-                params.push(("permissions", f.to_string()));
-            }
-        }
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "permissions", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if self._permissions.len() > 0 {
+            for f in self._permissions.iter() {
+                params.push("permissions", f);
+            }
+        }
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/iam/testPermissions";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -7453,21 +7778,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -7483,7 +7814,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -7552,7 +7883,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketTestIamPermissionCall<'a, S> {
@@ -7585,25 +7917,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketTestIamPermissionCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketTestIamPermissionCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketTestIamPermissionCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketTestIamPermissionCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7612,7 +7955,7 @@ where
 /// Updates a bucket. Changes to the bucket will be readable immediately after writing, but configuration changes may take time to propagate.
 ///
 /// A builder for the *update* method supported by a *bucket* resource.
-/// It is not used directly, but through a `BucketMethods` instance.
+/// It is not used directly, but through a [`BucketMethods`] instance.
 ///
 /// # Example
 ///
@@ -7625,7 +7968,7 @@ where
 /// use storage1::api::Bucket;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7647,8 +7990,8 @@ where
 ///              .projection("est")
 ///              .predefined_default_object_acl("et")
 ///              .predefined_acl("sea")
-///              .if_metageneration_not_match("consetetur")
-///              .if_metageneration_match("consetetur")
+///              .if_metageneration_not_match(-96)
+///              .if_metageneration_match(-46)
 ///              .doit().await;
 /// # }
 /// ```
@@ -7663,18 +8006,18 @@ pub struct BucketUpdateCall<'a, S>
     _projection: Option<String>,
     _predefined_default_object_acl: Option<String>,
     _predefined_acl: Option<String>,
-    _if_metageneration_not_match: Option<String>,
-    _if_metageneration_match: Option<String>,
+    _if_metageneration_not_match: Option<i64>,
+    _if_metageneration_match: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for BucketUpdateCall<'a, S> {}
 
 impl<'a, S> BucketUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7685,79 +8028,64 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Bucket)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.buckets.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(11 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._predefined_default_object_acl {
-            params.push(("predefinedDefaultObjectAcl", value.to_string()));
-        }
-        if let Some(value) = self._predefined_acl {
-            params.push(("predefinedAcl", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_not_match {
-            params.push(("ifMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_match {
-            params.push(("ifMetagenerationMatch", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "userProject", "provisionalUserProject", "projection", "predefinedDefaultObjectAcl", "predefinedAcl", "ifMetagenerationNotMatch", "ifMetagenerationMatch"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(11 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._predefined_default_object_acl.as_ref() {
+            params.push("predefinedDefaultObjectAcl", value);
+        }
+        if let Some(value) = self._predefined_acl.as_ref() {
+            params.push("predefinedAcl", value);
+        }
+        if let Some(value) = self._if_metageneration_not_match.as_ref() {
+            params.push("ifMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_match.as_ref() {
+            params.push("ifMetagenerationMatch", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -7771,14 +8099,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -7787,23 +8115,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -7819,7 +8153,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -7907,21 +8241,22 @@ where
     /// Makes the return of the bucket metadata conditional on whether the bucket's current metageneration does not match the given value.
     ///
     /// Sets the *if metageneration not match* query property to the given value.
-    pub fn if_metageneration_not_match(mut self, new_value: &str) -> BucketUpdateCall<'a, S> {
-        self._if_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_metageneration_not_match(mut self, new_value: i64) -> BucketUpdateCall<'a, S> {
+        self._if_metageneration_not_match = Some(new_value);
         self
     }
     /// Makes the return of the bucket metadata conditional on whether the bucket's current metageneration matches the given value.
     ///
     /// Sets the *if metageneration match* query property to the given value.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> BucketUpdateCall<'a, S> {
-        self._if_metageneration_match = Some(new_value.to_string());
+    pub fn if_metageneration_match(mut self, new_value: i64) -> BucketUpdateCall<'a, S> {
+        self._if_metageneration_match = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> BucketUpdateCall<'a, S> {
@@ -7954,25 +8289,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> BucketUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> BucketUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> BucketUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> BucketUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7981,7 +8327,7 @@ where
 /// Stop watching resources through this channel
 ///
 /// A builder for the *stop* method supported by a *channel* resource.
-/// It is not used directly, but through a `ChannelMethods` instance.
+/// It is not used directly, but through a [`ChannelMethods`] instance.
 ///
 /// # Example
 ///
@@ -7994,7 +8340,7 @@ where
 /// use storage1::api::Channel;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8021,14 +8367,14 @@ pub struct ChannelStopCall<'a, S>
     _request: Channel,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ChannelStopCall<'a, S> {}
 
 impl<'a, S> ChannelStopCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8039,35 +8385,34 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.channels.stop",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(2 + self._additional_params.len());
+
         for &field in [].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
+        let mut params = Params::with_capacity(2 + self._additional_params.len());
+
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "channels/stop";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -8081,14 +8426,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8097,23 +8442,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8129,7 +8480,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8162,7 +8513,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChannelStopCall<'a, S> {
@@ -8195,25 +8547,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ChannelStopCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ChannelStopCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ChannelStopCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ChannelStopCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8222,7 +8585,7 @@ where
 /// Permanently deletes the default object ACL entry for the specified entity on the specified bucket.
 ///
 /// A builder for the *delete* method supported by a *defaultObjectAccessControl* resource.
-/// It is not used directly, but through a `DefaultObjectAccessControlMethods` instance.
+/// It is not used directly, but through a [`DefaultObjectAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -8234,7 +8597,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8261,14 +8624,14 @@ pub struct DefaultObjectAccessControlDeleteCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for DefaultObjectAccessControlDeleteCall<'a, S> {}
 
 impl<'a, S> DefaultObjectAccessControlDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8279,74 +8642,59 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.defaultObjectAccessControls.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("entity", self._entity.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["bucket", "entity", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("entity", self._entity);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "b/{bucket}/defaultObjectAcl/{entity}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{entity}", "entity")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["entity", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["entity", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8354,21 +8702,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8384,7 +8738,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8442,7 +8796,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> DefaultObjectAccessControlDeleteCall<'a, S> {
@@ -8475,25 +8830,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> DefaultObjectAccessControlDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> DefaultObjectAccessControlDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> DefaultObjectAccessControlDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> DefaultObjectAccessControlDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8502,7 +8868,7 @@ where
 /// Returns the default object ACL entry for the specified entity on the specified bucket.
 ///
 /// A builder for the *get* method supported by a *defaultObjectAccessControl* resource.
-/// It is not used directly, but through a `DefaultObjectAccessControlMethods` instance.
+/// It is not used directly, but through a [`DefaultObjectAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -8514,7 +8880,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8541,14 +8907,14 @@ pub struct DefaultObjectAccessControlGetCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for DefaultObjectAccessControlGetCall<'a, S> {}
 
 impl<'a, S> DefaultObjectAccessControlGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8559,75 +8925,60 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ObjectAccessControl)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.defaultObjectAccessControls.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("entity", self._entity.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "entity", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("entity", self._entity);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/defaultObjectAcl/{entity}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{entity}", "entity")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["entity", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["entity", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8635,21 +8986,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8665,7 +9022,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8733,7 +9090,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> DefaultObjectAccessControlGetCall<'a, S> {
@@ -8766,25 +9124,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> DefaultObjectAccessControlGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> DefaultObjectAccessControlGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> DefaultObjectAccessControlGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> DefaultObjectAccessControlGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8793,7 +9162,7 @@ where
 /// Creates a new default object ACL entry on the specified bucket.
 ///
 /// A builder for the *insert* method supported by a *defaultObjectAccessControl* resource.
-/// It is not used directly, but through a `DefaultObjectAccessControlMethods` instance.
+/// It is not used directly, but through a [`DefaultObjectAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -8806,7 +9175,7 @@ where
 /// use storage1::api::ObjectAccessControl;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8838,14 +9207,14 @@ pub struct DefaultObjectAccessControlInsertCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for DefaultObjectAccessControlInsertCall<'a, S> {}
 
 impl<'a, S> DefaultObjectAccessControlInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8856,64 +9225,49 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ObjectAccessControl)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.defaultObjectAccessControls.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/defaultObjectAcl";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -8927,14 +9281,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8943,23 +9297,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8975,7 +9335,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9042,7 +9402,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> DefaultObjectAccessControlInsertCall<'a, S> {
@@ -9075,25 +9436,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> DefaultObjectAccessControlInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> DefaultObjectAccessControlInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> DefaultObjectAccessControlInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> DefaultObjectAccessControlInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -9102,7 +9474,7 @@ where
 /// Retrieves default object ACL entries on the specified bucket.
 ///
 /// A builder for the *list* method supported by a *defaultObjectAccessControl* resource.
-/// It is not used directly, but through a `DefaultObjectAccessControlMethods` instance.
+/// It is not used directly, but through a [`DefaultObjectAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -9114,7 +9486,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -9128,8 +9500,8 @@ where
 /// let result = hub.default_object_access_controls().list("bucket")
 ///              .user_project("Stet")
 ///              .provisional_user_project("dolores")
-///              .if_metageneration_not_match("eos")
-///              .if_metageneration_match("et")
+///              .if_metageneration_not_match(-25)
+///              .if_metageneration_match(-68)
 ///              .doit().await;
 /// # }
 /// ```
@@ -9140,18 +9512,18 @@ pub struct DefaultObjectAccessControlListCall<'a, S>
     _bucket: String,
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
-    _if_metageneration_not_match: Option<String>,
-    _if_metageneration_match: Option<String>,
+    _if_metageneration_not_match: Option<i64>,
+    _if_metageneration_match: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for DefaultObjectAccessControlListCall<'a, S> {}
 
 impl<'a, S> DefaultObjectAccessControlListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9162,80 +9534,65 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ObjectAccessControls)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.defaultObjectAccessControls.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_not_match {
-            params.push(("ifMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_match {
-            params.push(("ifMetagenerationMatch", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "userProject", "provisionalUserProject", "ifMetagenerationNotMatch", "ifMetagenerationMatch"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._if_metageneration_not_match.as_ref() {
+            params.push("ifMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_match.as_ref() {
+            params.push("ifMetagenerationMatch", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/defaultObjectAcl";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9243,21 +9600,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9273,7 +9636,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9331,21 +9694,22 @@ where
     /// If present, only return default ACL listing if the bucket's current metageneration does not match the given value.
     ///
     /// Sets the *if metageneration not match* query property to the given value.
-    pub fn if_metageneration_not_match(mut self, new_value: &str) -> DefaultObjectAccessControlListCall<'a, S> {
-        self._if_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_metageneration_not_match(mut self, new_value: i64) -> DefaultObjectAccessControlListCall<'a, S> {
+        self._if_metageneration_not_match = Some(new_value);
         self
     }
     /// If present, only return default ACL listing if the bucket's current metageneration matches this value.
     ///
     /// Sets the *if metageneration match* query property to the given value.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> DefaultObjectAccessControlListCall<'a, S> {
-        self._if_metageneration_match = Some(new_value.to_string());
+    pub fn if_metageneration_match(mut self, new_value: i64) -> DefaultObjectAccessControlListCall<'a, S> {
+        self._if_metageneration_match = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> DefaultObjectAccessControlListCall<'a, S> {
@@ -9378,25 +9742,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> DefaultObjectAccessControlListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> DefaultObjectAccessControlListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> DefaultObjectAccessControlListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> DefaultObjectAccessControlListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -9405,7 +9780,7 @@ where
 /// Patches a default object ACL entry on the specified bucket.
 ///
 /// A builder for the *patch* method supported by a *defaultObjectAccessControl* resource.
-/// It is not used directly, but through a `DefaultObjectAccessControlMethods` instance.
+/// It is not used directly, but through a [`DefaultObjectAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -9418,7 +9793,7 @@ where
 /// use storage1::api::ObjectAccessControl;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -9451,14 +9826,14 @@ pub struct DefaultObjectAccessControlPatchCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for DefaultObjectAccessControlPatchCall<'a, S> {}
 
 impl<'a, S> DefaultObjectAccessControlPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9469,65 +9844,50 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ObjectAccessControl)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.defaultObjectAccessControls.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("entity", self._entity.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "entity", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("entity", self._entity);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/defaultObjectAcl/{entity}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{entity}", "entity")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["entity", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["entity", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -9541,14 +9901,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9557,23 +9917,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9589,7 +9955,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9666,7 +10032,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> DefaultObjectAccessControlPatchCall<'a, S> {
@@ -9699,25 +10066,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> DefaultObjectAccessControlPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> DefaultObjectAccessControlPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> DefaultObjectAccessControlPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> DefaultObjectAccessControlPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -9726,7 +10104,7 @@ where
 /// Updates a default object ACL entry on the specified bucket.
 ///
 /// A builder for the *update* method supported by a *defaultObjectAccessControl* resource.
-/// It is not used directly, but through a `DefaultObjectAccessControlMethods` instance.
+/// It is not used directly, but through a [`DefaultObjectAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -9739,7 +10117,7 @@ where
 /// use storage1::api::ObjectAccessControl;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -9772,14 +10150,14 @@ pub struct DefaultObjectAccessControlUpdateCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for DefaultObjectAccessControlUpdateCall<'a, S> {}
 
 impl<'a, S> DefaultObjectAccessControlUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9790,65 +10168,50 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ObjectAccessControl)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.defaultObjectAccessControls.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("entity", self._entity.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "entity", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("entity", self._entity);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/defaultObjectAcl/{entity}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{entity}", "entity")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["entity", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["entity", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -9862,14 +10225,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9878,23 +10241,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9910,7 +10279,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9987,7 +10356,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> DefaultObjectAccessControlUpdateCall<'a, S> {
@@ -10020,25 +10390,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> DefaultObjectAccessControlUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> DefaultObjectAccessControlUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> DefaultObjectAccessControlUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> DefaultObjectAccessControlUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -10047,7 +10428,7 @@ where
 /// Permanently deletes a notification subscription.
 ///
 /// A builder for the *delete* method supported by a *notification* resource.
-/// It is not used directly, but through a `NotificationMethods` instance.
+/// It is not used directly, but through a [`NotificationMethods`] instance.
 ///
 /// # Example
 ///
@@ -10059,7 +10440,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -10086,14 +10467,14 @@ pub struct NotificationDeleteCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for NotificationDeleteCall<'a, S> {}
 
 impl<'a, S> NotificationDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -10104,74 +10485,59 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.notifications.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("notification", self._notification.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["bucket", "notification", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("notification", self._notification);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "b/{bucket}/notificationConfigs/{notification}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{notification}", "notification")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["notification", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["notification", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -10179,21 +10545,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -10209,7 +10581,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -10267,7 +10639,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> NotificationDeleteCall<'a, S> {
@@ -10300,25 +10673,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> NotificationDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> NotificationDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> NotificationDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> NotificationDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -10327,7 +10711,7 @@ where
 /// View a notification configuration.
 ///
 /// A builder for the *get* method supported by a *notification* resource.
-/// It is not used directly, but through a `NotificationMethods` instance.
+/// It is not used directly, but through a [`NotificationMethods`] instance.
 ///
 /// # Example
 ///
@@ -10339,7 +10723,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -10366,14 +10750,14 @@ pub struct NotificationGetCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for NotificationGetCall<'a, S> {}
 
 impl<'a, S> NotificationGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -10384,75 +10768,60 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Notification)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.notifications.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("notification", self._notification.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "notification", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("notification", self._notification);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/notificationConfigs/{notification}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{notification}", "notification")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["notification", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["notification", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -10460,21 +10829,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -10490,7 +10865,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -10558,7 +10933,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> NotificationGetCall<'a, S> {
@@ -10591,25 +10967,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> NotificationGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> NotificationGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> NotificationGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> NotificationGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -10618,7 +11005,7 @@ where
 /// Creates a notification subscription for a given bucket.
 ///
 /// A builder for the *insert* method supported by a *notification* resource.
-/// It is not used directly, but through a `NotificationMethods` instance.
+/// It is not used directly, but through a [`NotificationMethods`] instance.
 ///
 /// # Example
 ///
@@ -10631,7 +11018,7 @@ where
 /// use storage1::api::Notification;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -10663,14 +11050,14 @@ pub struct NotificationInsertCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for NotificationInsertCall<'a, S> {}
 
 impl<'a, S> NotificationInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -10681,64 +11068,49 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Notification)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.notifications.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/notificationConfigs";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -10752,14 +11124,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -10768,23 +11140,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -10800,7 +11178,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -10867,7 +11245,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> NotificationInsertCall<'a, S> {
@@ -10900,25 +11279,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> NotificationInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> NotificationInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> NotificationInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> NotificationInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -10927,7 +11317,7 @@ where
 /// Retrieves a list of notification subscriptions for a given bucket.
 ///
 /// A builder for the *list* method supported by a *notification* resource.
-/// It is not used directly, but through a `NotificationMethods` instance.
+/// It is not used directly, but through a [`NotificationMethods`] instance.
 ///
 /// # Example
 ///
@@ -10939,7 +11329,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -10965,14 +11355,14 @@ pub struct NotificationListCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for NotificationListCall<'a, S> {}
 
 impl<'a, S> NotificationListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -10983,74 +11373,59 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Notifications)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.notifications.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/notificationConfigs";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -11058,21 +11433,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -11088,7 +11469,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -11146,7 +11527,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> NotificationListCall<'a, S> {
@@ -11179,25 +11561,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> NotificationListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> NotificationListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> NotificationListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> NotificationListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -11206,7 +11599,7 @@ where
 /// Permanently deletes the ACL entry for the specified entity on the specified object.
 ///
 /// A builder for the *delete* method supported by a *objectAccessControl* resource.
-/// It is not used directly, but through a `ObjectAccessControlMethods` instance.
+/// It is not used directly, but through a [`ObjectAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -11218,7 +11611,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -11232,7 +11625,7 @@ where
 /// let result = hub.object_access_controls().delete("bucket", "object", "entity")
 ///              .user_project("justo")
 ///              .provisional_user_project("sea")
-///              .generation("consetetur")
+///              .generation(-96)
 ///              .doit().await;
 /// # }
 /// ```
@@ -11245,17 +11638,17 @@ pub struct ObjectAccessControlDeleteCall<'a, S>
     _entity: String,
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
-    _generation: Option<String>,
+    _generation: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectAccessControlDeleteCall<'a, S> {}
 
 impl<'a, S> ObjectAccessControlDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -11266,78 +11659,63 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objectAccessControls.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("object", self._object.to_string()));
-        params.push(("entity", self._entity.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._generation {
-            params.push(("generation", value.to_string()));
-        }
+
         for &field in ["bucket", "object", "entity", "userProject", "provisionalUserProject", "generation"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("object", self._object);
+        params.push("entity", self._entity);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._generation.as_ref() {
+            params.push("generation", value.to_string());
         }
 
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/{object}/acl/{entity}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{object}", "object"), ("{entity}", "entity")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(3);
-            for param_name in ["entity", "object", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["entity", "object", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -11345,21 +11723,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -11375,7 +11759,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -11443,14 +11827,15 @@ where
     /// If present, selects a specific revision of this object (as opposed to the latest version, the default).
     ///
     /// Sets the *generation* query property to the given value.
-    pub fn generation(mut self, new_value: &str) -> ObjectAccessControlDeleteCall<'a, S> {
-        self._generation = Some(new_value.to_string());
+    pub fn generation(mut self, new_value: i64) -> ObjectAccessControlDeleteCall<'a, S> {
+        self._generation = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectAccessControlDeleteCall<'a, S> {
@@ -11483,25 +11868,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectAccessControlDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectAccessControlDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectAccessControlDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectAccessControlDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -11510,7 +11906,7 @@ where
 /// Returns the ACL entry for the specified entity on the specified object.
 ///
 /// A builder for the *get* method supported by a *objectAccessControl* resource.
-/// It is not used directly, but through a `ObjectAccessControlMethods` instance.
+/// It is not used directly, but through a [`ObjectAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -11522,7 +11918,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -11536,7 +11932,7 @@ where
 /// let result = hub.object_access_controls().get("bucket", "object", "entity")
 ///              .user_project("At")
 ///              .provisional_user_project("dolores")
-///              .generation("consetetur")
+///              .generation(-46)
 ///              .doit().await;
 /// # }
 /// ```
@@ -11549,17 +11945,17 @@ pub struct ObjectAccessControlGetCall<'a, S>
     _entity: String,
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
-    _generation: Option<String>,
+    _generation: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectAccessControlGetCall<'a, S> {}
 
 impl<'a, S> ObjectAccessControlGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -11570,79 +11966,64 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ObjectAccessControl)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objectAccessControls.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(8 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("object", self._object.to_string()));
-        params.push(("entity", self._entity.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._generation {
-            params.push(("generation", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "object", "entity", "userProject", "provisionalUserProject", "generation"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(8 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("object", self._object);
+        params.push("entity", self._entity);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._generation.as_ref() {
+            params.push("generation", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/{object}/acl/{entity}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{object}", "object"), ("{entity}", "entity")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(3);
-            for param_name in ["entity", "object", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["entity", "object", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -11650,21 +12031,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -11680,7 +12067,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -11758,14 +12145,15 @@ where
     /// If present, selects a specific revision of this object (as opposed to the latest version, the default).
     ///
     /// Sets the *generation* query property to the given value.
-    pub fn generation(mut self, new_value: &str) -> ObjectAccessControlGetCall<'a, S> {
-        self._generation = Some(new_value.to_string());
+    pub fn generation(mut self, new_value: i64) -> ObjectAccessControlGetCall<'a, S> {
+        self._generation = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectAccessControlGetCall<'a, S> {
@@ -11798,25 +12186,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectAccessControlGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectAccessControlGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectAccessControlGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectAccessControlGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -11825,7 +12224,7 @@ where
 /// Creates a new ACL entry on the specified object.
 ///
 /// A builder for the *insert* method supported by a *objectAccessControl* resource.
-/// It is not used directly, but through a `ObjectAccessControlMethods` instance.
+/// It is not used directly, but through a [`ObjectAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -11838,7 +12237,7 @@ where
 /// use storage1::api::ObjectAccessControl;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -11857,7 +12256,7 @@ where
 /// let result = hub.object_access_controls().insert(req, "bucket", "object")
 ///              .user_project("aliquyam")
 ///              .provisional_user_project("no")
-///              .generation("amet.")
+///              .generation(-2)
 ///              .doit().await;
 /// # }
 /// ```
@@ -11870,17 +12269,17 @@ pub struct ObjectAccessControlInsertCall<'a, S>
     _object: String,
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
-    _generation: Option<String>,
+    _generation: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectAccessControlInsertCall<'a, S> {}
 
 impl<'a, S> ObjectAccessControlInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -11891,68 +12290,53 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ObjectAccessControl)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objectAccessControls.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(8 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("object", self._object.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._generation {
-            params.push(("generation", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "object", "userProject", "provisionalUserProject", "generation"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(8 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("object", self._object);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._generation.as_ref() {
+            params.push("generation", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/{object}/acl";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{object}", "object")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["object", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["object", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -11966,14 +12350,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -11982,23 +12366,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -12014,7 +12404,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -12091,14 +12481,15 @@ where
     /// If present, selects a specific revision of this object (as opposed to the latest version, the default).
     ///
     /// Sets the *generation* query property to the given value.
-    pub fn generation(mut self, new_value: &str) -> ObjectAccessControlInsertCall<'a, S> {
-        self._generation = Some(new_value.to_string());
+    pub fn generation(mut self, new_value: i64) -> ObjectAccessControlInsertCall<'a, S> {
+        self._generation = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectAccessControlInsertCall<'a, S> {
@@ -12131,25 +12522,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectAccessControlInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectAccessControlInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectAccessControlInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectAccessControlInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -12158,7 +12560,7 @@ where
 /// Retrieves ACL entries on the specified object.
 ///
 /// A builder for the *list* method supported by a *objectAccessControl* resource.
-/// It is not used directly, but through a `ObjectAccessControlMethods` instance.
+/// It is not used directly, but through a [`ObjectAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -12170,7 +12572,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -12184,7 +12586,7 @@ where
 /// let result = hub.object_access_controls().list("bucket", "object")
 ///              .user_project("accusam")
 ///              .provisional_user_project("gubergren")
-///              .generation("sadipscing")
+///              .generation(-45)
 ///              .doit().await;
 /// # }
 /// ```
@@ -12196,17 +12598,17 @@ pub struct ObjectAccessControlListCall<'a, S>
     _object: String,
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
-    _generation: Option<String>,
+    _generation: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectAccessControlListCall<'a, S> {}
 
 impl<'a, S> ObjectAccessControlListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -12217,78 +12619,63 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ObjectAccessControls)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objectAccessControls.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("object", self._object.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._generation {
-            params.push(("generation", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "object", "userProject", "provisionalUserProject", "generation"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("object", self._object);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._generation.as_ref() {
+            params.push("generation", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/{object}/acl";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{object}", "object")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["object", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["object", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -12296,21 +12683,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -12326,7 +12719,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -12394,14 +12787,15 @@ where
     /// If present, selects a specific revision of this object (as opposed to the latest version, the default).
     ///
     /// Sets the *generation* query property to the given value.
-    pub fn generation(mut self, new_value: &str) -> ObjectAccessControlListCall<'a, S> {
-        self._generation = Some(new_value.to_string());
+    pub fn generation(mut self, new_value: i64) -> ObjectAccessControlListCall<'a, S> {
+        self._generation = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectAccessControlListCall<'a, S> {
@@ -12434,25 +12828,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectAccessControlListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectAccessControlListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectAccessControlListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectAccessControlListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -12461,7 +12866,7 @@ where
 /// Patches an ACL entry on the specified object.
 ///
 /// A builder for the *patch* method supported by a *objectAccessControl* resource.
-/// It is not used directly, but through a `ObjectAccessControlMethods` instance.
+/// It is not used directly, but through a [`ObjectAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -12474,7 +12879,7 @@ where
 /// use storage1::api::ObjectAccessControl;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -12493,7 +12898,7 @@ where
 /// let result = hub.object_access_controls().patch(req, "bucket", "object", "entity")
 ///              .user_project("sit")
 ///              .provisional_user_project("magna")
-///              .generation("et")
+///              .generation(-22)
 ///              .doit().await;
 /// # }
 /// ```
@@ -12507,17 +12912,17 @@ pub struct ObjectAccessControlPatchCall<'a, S>
     _entity: String,
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
-    _generation: Option<String>,
+    _generation: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectAccessControlPatchCall<'a, S> {}
 
 impl<'a, S> ObjectAccessControlPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -12528,69 +12933,54 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ObjectAccessControl)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objectAccessControls.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(9 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("object", self._object.to_string()));
-        params.push(("entity", self._entity.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._generation {
-            params.push(("generation", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "object", "entity", "userProject", "provisionalUserProject", "generation"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(9 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("object", self._object);
+        params.push("entity", self._entity);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._generation.as_ref() {
+            params.push("generation", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/{object}/acl/{entity}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{object}", "object"), ("{entity}", "entity")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(3);
-            for param_name in ["entity", "object", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["entity", "object", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -12604,14 +12994,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -12620,23 +13010,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -12652,7 +13048,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -12739,14 +13135,15 @@ where
     /// If present, selects a specific revision of this object (as opposed to the latest version, the default).
     ///
     /// Sets the *generation* query property to the given value.
-    pub fn generation(mut self, new_value: &str) -> ObjectAccessControlPatchCall<'a, S> {
-        self._generation = Some(new_value.to_string());
+    pub fn generation(mut self, new_value: i64) -> ObjectAccessControlPatchCall<'a, S> {
+        self._generation = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectAccessControlPatchCall<'a, S> {
@@ -12779,25 +13176,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectAccessControlPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectAccessControlPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectAccessControlPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectAccessControlPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -12806,7 +13214,7 @@ where
 /// Updates an ACL entry on the specified object.
 ///
 /// A builder for the *update* method supported by a *objectAccessControl* resource.
-/// It is not used directly, but through a `ObjectAccessControlMethods` instance.
+/// It is not used directly, but through a [`ObjectAccessControlMethods`] instance.
 ///
 /// # Example
 ///
@@ -12819,7 +13227,7 @@ where
 /// use storage1::api::ObjectAccessControl;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -12838,7 +13246,7 @@ where
 /// let result = hub.object_access_controls().update(req, "bucket", "object", "entity")
 ///              .user_project("justo")
 ///              .provisional_user_project("amet.")
-///              .generation("no")
+///              .generation(-11)
 ///              .doit().await;
 /// # }
 /// ```
@@ -12852,17 +13260,17 @@ pub struct ObjectAccessControlUpdateCall<'a, S>
     _entity: String,
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
-    _generation: Option<String>,
+    _generation: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectAccessControlUpdateCall<'a, S> {}
 
 impl<'a, S> ObjectAccessControlUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -12873,69 +13281,54 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ObjectAccessControl)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objectAccessControls.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(9 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("object", self._object.to_string()));
-        params.push(("entity", self._entity.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._generation {
-            params.push(("generation", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "object", "entity", "userProject", "provisionalUserProject", "generation"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(9 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("object", self._object);
+        params.push("entity", self._entity);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._generation.as_ref() {
+            params.push("generation", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/{object}/acl/{entity}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{object}", "object"), ("{entity}", "entity")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(3);
-            for param_name in ["entity", "object", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["entity", "object", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -12949,14 +13342,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -12965,23 +13358,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -12997,7 +13396,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -13084,14 +13483,15 @@ where
     /// If present, selects a specific revision of this object (as opposed to the latest version, the default).
     ///
     /// Sets the *generation* query property to the given value.
-    pub fn generation(mut self, new_value: &str) -> ObjectAccessControlUpdateCall<'a, S> {
-        self._generation = Some(new_value.to_string());
+    pub fn generation(mut self, new_value: i64) -> ObjectAccessControlUpdateCall<'a, S> {
+        self._generation = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectAccessControlUpdateCall<'a, S> {
@@ -13124,25 +13524,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectAccessControlUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectAccessControlUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectAccessControlUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectAccessControlUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -13151,7 +13562,7 @@ where
 /// Concatenates a list of existing objects into a new object in the same bucket.
 ///
 /// A builder for the *compose* method supported by a *object* resource.
-/// It is not used directly, but through a `ObjectMethods` instance.
+/// It is not used directly, but through a [`ObjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -13164,7 +13575,7 @@ where
 /// use storage1::api::ComposeRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -13184,8 +13595,8 @@ where
 ///              .user_project("kasd")
 ///              .provisional_user_project("Lorem")
 ///              .kms_key_name("sanctus")
-///              .if_metageneration_match("nonumy")
-///              .if_generation_match("rebum.")
+///              .if_metageneration_match(-91)
+///              .if_generation_match(-66)
 ///              .destination_predefined_acl("tempor")
 ///              .doit().await;
 /// # }
@@ -13200,19 +13611,19 @@ pub struct ObjectComposeCall<'a, S>
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
     _kms_key_name: Option<String>,
-    _if_metageneration_match: Option<String>,
-    _if_generation_match: Option<String>,
+    _if_metageneration_match: Option<i64>,
+    _if_generation_match: Option<i64>,
     _destination_predefined_acl: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectComposeCall<'a, S> {}
 
 impl<'a, S> ObjectComposeCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -13223,77 +13634,62 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Object)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objects.compose",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(11 + self._additional_params.len());
-        params.push(("destinationBucket", self._destination_bucket.to_string()));
-        params.push(("destinationObject", self._destination_object.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._kms_key_name {
-            params.push(("kmsKeyName", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_match {
-            params.push(("ifMetagenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_match {
-            params.push(("ifGenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._destination_predefined_acl {
-            params.push(("destinationPredefinedAcl", value.to_string()));
-        }
+
         for &field in ["alt", "destinationBucket", "destinationObject", "userProject", "provisionalUserProject", "kmsKeyName", "ifMetagenerationMatch", "ifGenerationMatch", "destinationPredefinedAcl"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(11 + self._additional_params.len());
+        params.push("destinationBucket", self._destination_bucket);
+        params.push("destinationObject", self._destination_object);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._kms_key_name.as_ref() {
+            params.push("kmsKeyName", value);
+        }
+        if let Some(value) = self._if_metageneration_match.as_ref() {
+            params.push("ifMetagenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_match.as_ref() {
+            params.push("ifGenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._destination_predefined_acl.as_ref() {
+            params.push("destinationPredefinedAcl", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{destinationBucket}/o/{destinationObject}/compose";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{destinationBucket}", "destinationBucket"), ("{destinationObject}", "destinationObject")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["destinationObject", "destinationBucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["destinationObject", "destinationBucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -13307,14 +13703,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -13323,23 +13719,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -13355,7 +13757,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -13439,15 +13841,15 @@ where
     /// Makes the operation conditional on whether the object's current metageneration matches the given value.
     ///
     /// Sets the *if metageneration match* query property to the given value.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> ObjectComposeCall<'a, S> {
-        self._if_metageneration_match = Some(new_value.to_string());
+    pub fn if_metageneration_match(mut self, new_value: i64) -> ObjectComposeCall<'a, S> {
+        self._if_metageneration_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current generation matches the given value. Setting to 0 makes the operation succeed only if there are no live versions of the object.
     ///
     /// Sets the *if generation match* query property to the given value.
-    pub fn if_generation_match(mut self, new_value: &str) -> ObjectComposeCall<'a, S> {
-        self._if_generation_match = Some(new_value.to_string());
+    pub fn if_generation_match(mut self, new_value: i64) -> ObjectComposeCall<'a, S> {
+        self._if_generation_match = Some(new_value);
         self
     }
     /// Apply a predefined set of access controls to the destination object.
@@ -13460,7 +13862,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectComposeCall<'a, S> {
@@ -13493,25 +13896,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectComposeCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectComposeCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectComposeCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectComposeCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -13520,7 +13934,7 @@ where
 /// Copies a source object to a destination object. Optionally overrides metadata.
 ///
 /// A builder for the *copy* method supported by a *object* resource.
-/// It is not used directly, but through a `ObjectMethods` instance.
+/// It is not used directly, but through a [`ObjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -13533,7 +13947,7 @@ where
 /// use storage1::api::Object;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -13551,17 +13965,17 @@ where
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.objects().copy(req, "sourceBucket", "sourceObject", "destinationBucket", "destinationObject")
 ///              .user_project("amet")
-///              .source_generation("ut")
+///              .source_generation(-37)
 ///              .provisional_user_project("At")
 ///              .projection("sit")
-///              .if_source_metageneration_not_match("vero")
-///              .if_source_metageneration_match("duo")
-///              .if_source_generation_not_match("sadipscing")
-///              .if_source_generation_match("ut")
-///              .if_metageneration_not_match("rebum.")
-///              .if_metageneration_match("duo")
-///              .if_generation_not_match("kasd")
-///              .if_generation_match("sadipscing")
+///              .if_source_metageneration_not_match(-76)
+///              .if_source_metageneration_match(-20)
+///              .if_source_generation_not_match(-45)
+///              .if_source_generation_match(-87)
+///              .if_metageneration_not_match(-16)
+///              .if_metageneration_match(-70)
+///              .if_generation_not_match(-63)
+///              .if_generation_match(-95)
 ///              .destination_predefined_acl("tempor")
 ///              .destination_kms_key_name("sea")
 ///              .doit().await;
@@ -13577,29 +13991,29 @@ pub struct ObjectCopyCall<'a, S>
     _destination_bucket: String,
     _destination_object: String,
     _user_project: Option<String>,
-    _source_generation: Option<String>,
+    _source_generation: Option<i64>,
     _provisional_user_project: Option<String>,
     _projection: Option<String>,
-    _if_source_metageneration_not_match: Option<String>,
-    _if_source_metageneration_match: Option<String>,
-    _if_source_generation_not_match: Option<String>,
-    _if_source_generation_match: Option<String>,
-    _if_metageneration_not_match: Option<String>,
-    _if_metageneration_match: Option<String>,
-    _if_generation_not_match: Option<String>,
-    _if_generation_match: Option<String>,
+    _if_source_metageneration_not_match: Option<i64>,
+    _if_source_metageneration_match: Option<i64>,
+    _if_source_generation_not_match: Option<i64>,
+    _if_source_generation_match: Option<i64>,
+    _if_metageneration_not_match: Option<i64>,
+    _if_metageneration_match: Option<i64>,
+    _if_generation_not_match: Option<i64>,
+    _if_generation_match: Option<i64>,
     _destination_predefined_acl: Option<String>,
     _destination_kms_key_name: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectCopyCall<'a, S> {}
 
 impl<'a, S> ObjectCopyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -13610,103 +14024,88 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Object)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objects.copy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(21 + self._additional_params.len());
-        params.push(("sourceBucket", self._source_bucket.to_string()));
-        params.push(("sourceObject", self._source_object.to_string()));
-        params.push(("destinationBucket", self._destination_bucket.to_string()));
-        params.push(("destinationObject", self._destination_object.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._source_generation {
-            params.push(("sourceGeneration", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._if_source_metageneration_not_match {
-            params.push(("ifSourceMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_source_metageneration_match {
-            params.push(("ifSourceMetagenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_source_generation_not_match {
-            params.push(("ifSourceGenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_source_generation_match {
-            params.push(("ifSourceGenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_not_match {
-            params.push(("ifMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_match {
-            params.push(("ifMetagenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_not_match {
-            params.push(("ifGenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_match {
-            params.push(("ifGenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._destination_predefined_acl {
-            params.push(("destinationPredefinedAcl", value.to_string()));
-        }
-        if let Some(value) = self._destination_kms_key_name {
-            params.push(("destinationKmsKeyName", value.to_string()));
-        }
+
         for &field in ["alt", "sourceBucket", "sourceObject", "destinationBucket", "destinationObject", "userProject", "sourceGeneration", "provisionalUserProject", "projection", "ifSourceMetagenerationNotMatch", "ifSourceMetagenerationMatch", "ifSourceGenerationNotMatch", "ifSourceGenerationMatch", "ifMetagenerationNotMatch", "ifMetagenerationMatch", "ifGenerationNotMatch", "ifGenerationMatch", "destinationPredefinedAcl", "destinationKmsKeyName"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(21 + self._additional_params.len());
+        params.push("sourceBucket", self._source_bucket);
+        params.push("sourceObject", self._source_object);
+        params.push("destinationBucket", self._destination_bucket);
+        params.push("destinationObject", self._destination_object);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._source_generation.as_ref() {
+            params.push("sourceGeneration", value.to_string());
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._if_source_metageneration_not_match.as_ref() {
+            params.push("ifSourceMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_source_metageneration_match.as_ref() {
+            params.push("ifSourceMetagenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._if_source_generation_not_match.as_ref() {
+            params.push("ifSourceGenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_source_generation_match.as_ref() {
+            params.push("ifSourceGenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_not_match.as_ref() {
+            params.push("ifMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_match.as_ref() {
+            params.push("ifMetagenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_not_match.as_ref() {
+            params.push("ifGenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_match.as_ref() {
+            params.push("ifGenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._destination_predefined_acl.as_ref() {
+            params.push("destinationPredefinedAcl", value);
+        }
+        if let Some(value) = self._destination_kms_key_name.as_ref() {
+            params.push("destinationKmsKeyName", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{sourceBucket}/o/{sourceObject}/copyTo/b/{destinationBucket}/o/{destinationObject}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{sourceBucket}", "sourceBucket"), ("{sourceObject}", "sourceObject"), ("{destinationBucket}", "destinationBucket"), ("{destinationObject}", "destinationObject")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(4);
-            for param_name in ["destinationObject", "destinationBucket", "sourceObject", "sourceBucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["destinationObject", "destinationBucket", "sourceObject", "sourceBucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -13720,14 +14119,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -13736,23 +14135,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -13768,7 +14173,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -13858,8 +14263,8 @@ where
     /// If present, selects a specific revision of the source object (as opposed to the latest version, the default).
     ///
     /// Sets the *source generation* query property to the given value.
-    pub fn source_generation(mut self, new_value: &str) -> ObjectCopyCall<'a, S> {
-        self._source_generation = Some(new_value.to_string());
+    pub fn source_generation(mut self, new_value: i64) -> ObjectCopyCall<'a, S> {
+        self._source_generation = Some(new_value);
         self
     }
     /// The project to be billed for this request if the target bucket is requester-pays bucket.
@@ -13879,57 +14284,57 @@ where
     /// Makes the operation conditional on whether the source object's current metageneration does not match the given value.
     ///
     /// Sets the *if source metageneration not match* query property to the given value.
-    pub fn if_source_metageneration_not_match(mut self, new_value: &str) -> ObjectCopyCall<'a, S> {
-        self._if_source_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_source_metageneration_not_match(mut self, new_value: i64) -> ObjectCopyCall<'a, S> {
+        self._if_source_metageneration_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the source object's current metageneration matches the given value.
     ///
     /// Sets the *if source metageneration match* query property to the given value.
-    pub fn if_source_metageneration_match(mut self, new_value: &str) -> ObjectCopyCall<'a, S> {
-        self._if_source_metageneration_match = Some(new_value.to_string());
+    pub fn if_source_metageneration_match(mut self, new_value: i64) -> ObjectCopyCall<'a, S> {
+        self._if_source_metageneration_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the source object's current generation does not match the given value.
     ///
     /// Sets the *if source generation not match* query property to the given value.
-    pub fn if_source_generation_not_match(mut self, new_value: &str) -> ObjectCopyCall<'a, S> {
-        self._if_source_generation_not_match = Some(new_value.to_string());
+    pub fn if_source_generation_not_match(mut self, new_value: i64) -> ObjectCopyCall<'a, S> {
+        self._if_source_generation_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the source object's current generation matches the given value.
     ///
     /// Sets the *if source generation match* query property to the given value.
-    pub fn if_source_generation_match(mut self, new_value: &str) -> ObjectCopyCall<'a, S> {
-        self._if_source_generation_match = Some(new_value.to_string());
+    pub fn if_source_generation_match(mut self, new_value: i64) -> ObjectCopyCall<'a, S> {
+        self._if_source_generation_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the destination object's current metageneration does not match the given value.
     ///
     /// Sets the *if metageneration not match* query property to the given value.
-    pub fn if_metageneration_not_match(mut self, new_value: &str) -> ObjectCopyCall<'a, S> {
-        self._if_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_metageneration_not_match(mut self, new_value: i64) -> ObjectCopyCall<'a, S> {
+        self._if_metageneration_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the destination object's current metageneration matches the given value.
     ///
     /// Sets the *if metageneration match* query property to the given value.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> ObjectCopyCall<'a, S> {
-        self._if_metageneration_match = Some(new_value.to_string());
+    pub fn if_metageneration_match(mut self, new_value: i64) -> ObjectCopyCall<'a, S> {
+        self._if_metageneration_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the destination object's current generation does not match the given value. If no live object exists, the precondition fails. Setting to 0 makes the operation succeed only if there is a live version of the object.
     ///
     /// Sets the *if generation not match* query property to the given value.
-    pub fn if_generation_not_match(mut self, new_value: &str) -> ObjectCopyCall<'a, S> {
-        self._if_generation_not_match = Some(new_value.to_string());
+    pub fn if_generation_not_match(mut self, new_value: i64) -> ObjectCopyCall<'a, S> {
+        self._if_generation_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the destination object's current generation matches the given value. Setting to 0 makes the operation succeed only if there are no live versions of the object.
     ///
     /// Sets the *if generation match* query property to the given value.
-    pub fn if_generation_match(mut self, new_value: &str) -> ObjectCopyCall<'a, S> {
-        self._if_generation_match = Some(new_value.to_string());
+    pub fn if_generation_match(mut self, new_value: i64) -> ObjectCopyCall<'a, S> {
+        self._if_generation_match = Some(new_value);
         self
     }
     /// Apply a predefined set of access controls to the destination object.
@@ -13949,7 +14354,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectCopyCall<'a, S> {
@@ -13982,25 +14388,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectCopyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectCopyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectCopyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectCopyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -14009,7 +14426,7 @@ where
 /// Deletes an object and its metadata. Deletions are permanent if versioning is not enabled for the bucket, or if the generation parameter is used.
 ///
 /// A builder for the *delete* method supported by a *object* resource.
-/// It is not used directly, but through a `ObjectMethods` instance.
+/// It is not used directly, but through a [`ObjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -14021,7 +14438,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -14035,11 +14452,11 @@ where
 /// let result = hub.objects().delete("bucket", "object")
 ///              .user_project("magna")
 ///              .provisional_user_project("takimata")
-///              .if_metageneration_not_match("rebum.")
-///              .if_metageneration_match("At")
-///              .if_generation_not_match("invidunt")
-///              .if_generation_match("clita")
-///              .generation("Stet")
+///              .if_metageneration_not_match(-66)
+///              .if_metageneration_match(-27)
+///              .if_generation_not_match(-88)
+///              .if_generation_match(-14)
+///              .generation(-15)
 ///              .doit().await;
 /// # }
 /// ```
@@ -14051,21 +14468,21 @@ pub struct ObjectDeleteCall<'a, S>
     _object: String,
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
-    _if_metageneration_not_match: Option<String>,
-    _if_metageneration_match: Option<String>,
-    _if_generation_not_match: Option<String>,
-    _if_generation_match: Option<String>,
-    _generation: Option<String>,
+    _if_metageneration_not_match: Option<i64>,
+    _if_metageneration_match: Option<i64>,
+    _if_generation_not_match: Option<i64>,
+    _if_generation_match: Option<i64>,
+    _generation: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectDeleteCall<'a, S> {}
 
 impl<'a, S> ObjectDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -14076,89 +14493,74 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objects.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(10 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("object", self._object.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_not_match {
-            params.push(("ifMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_match {
-            params.push(("ifMetagenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_not_match {
-            params.push(("ifGenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_match {
-            params.push(("ifGenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._generation {
-            params.push(("generation", value.to_string()));
-        }
+
         for &field in ["bucket", "object", "userProject", "provisionalUserProject", "ifMetagenerationNotMatch", "ifMetagenerationMatch", "ifGenerationNotMatch", "ifGenerationMatch", "generation"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(10 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("object", self._object);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._if_metageneration_not_match.as_ref() {
+            params.push("ifMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_match.as_ref() {
+            params.push("ifMetagenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_not_match.as_ref() {
+            params.push("ifGenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_match.as_ref() {
+            params.push("ifGenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._generation.as_ref() {
+            params.push("generation", value.to_string());
         }
 
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/{object}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{object}", "object")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["object", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["object", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -14166,21 +14568,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -14196,7 +14604,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -14254,42 +14662,43 @@ where
     /// Makes the operation conditional on whether the object's current metageneration does not match the given value.
     ///
     /// Sets the *if metageneration not match* query property to the given value.
-    pub fn if_metageneration_not_match(mut self, new_value: &str) -> ObjectDeleteCall<'a, S> {
-        self._if_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_metageneration_not_match(mut self, new_value: i64) -> ObjectDeleteCall<'a, S> {
+        self._if_metageneration_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current metageneration matches the given value.
     ///
     /// Sets the *if metageneration match* query property to the given value.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> ObjectDeleteCall<'a, S> {
-        self._if_metageneration_match = Some(new_value.to_string());
+    pub fn if_metageneration_match(mut self, new_value: i64) -> ObjectDeleteCall<'a, S> {
+        self._if_metageneration_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current generation does not match the given value. If no live object exists, the precondition fails. Setting to 0 makes the operation succeed only if there is a live version of the object.
     ///
     /// Sets the *if generation not match* query property to the given value.
-    pub fn if_generation_not_match(mut self, new_value: &str) -> ObjectDeleteCall<'a, S> {
-        self._if_generation_not_match = Some(new_value.to_string());
+    pub fn if_generation_not_match(mut self, new_value: i64) -> ObjectDeleteCall<'a, S> {
+        self._if_generation_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current generation matches the given value. Setting to 0 makes the operation succeed only if there are no live versions of the object.
     ///
     /// Sets the *if generation match* query property to the given value.
-    pub fn if_generation_match(mut self, new_value: &str) -> ObjectDeleteCall<'a, S> {
-        self._if_generation_match = Some(new_value.to_string());
+    pub fn if_generation_match(mut self, new_value: i64) -> ObjectDeleteCall<'a, S> {
+        self._if_generation_match = Some(new_value);
         self
     }
     /// If present, permanently deletes a specific revision of this object (as opposed to the latest version, the default).
     ///
     /// Sets the *generation* query property to the given value.
-    pub fn generation(mut self, new_value: &str) -> ObjectDeleteCall<'a, S> {
-        self._generation = Some(new_value.to_string());
+    pub fn generation(mut self, new_value: i64) -> ObjectDeleteCall<'a, S> {
+        self._generation = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectDeleteCall<'a, S> {
@@ -14322,25 +14731,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -14354,7 +14774,7 @@ where
 /// but not the `Object` structure that you would usually get. The latter will be a default value.
 ///
 /// A builder for the *get* method supported by a *object* resource.
-/// It is not used directly, but through a `ObjectMethods` instance.
+/// It is not used directly, but through a [`ObjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -14366,7 +14786,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -14381,11 +14801,11 @@ where
 ///              .user_project("sit")
 ///              .provisional_user_project("vero")
 ///              .projection("rebum.")
-///              .if_metageneration_not_match("dolores")
-///              .if_metageneration_match("consetetur")
-///              .if_generation_not_match("dolores")
-///              .if_generation_match("sed")
-///              .generation("invidunt")
+///              .if_metageneration_not_match(-19)
+///              .if_metageneration_match(-96)
+///              .if_generation_not_match(-19)
+///              .if_generation_match(-30)
+///              .generation(-38)
 ///              .doit().await;
 /// # }
 /// ```
@@ -14398,21 +14818,21 @@ pub struct ObjectGetCall<'a, S>
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
     _projection: Option<String>,
-    _if_metageneration_not_match: Option<String>,
-    _if_metageneration_match: Option<String>,
-    _if_generation_not_match: Option<String>,
-    _if_generation_match: Option<String>,
-    _generation: Option<String>,
+    _if_metageneration_not_match: Option<i64>,
+    _if_metageneration_match: Option<i64>,
+    _if_generation_not_match: Option<i64>,
+    _if_generation_match: Option<i64>,
+    _generation: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectGetCall<'a, S> {}
 
 impl<'a, S> ObjectGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -14423,109 +14843,87 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Object)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objects.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(11 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("object", self._object.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_not_match {
-            params.push(("ifMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_match {
-            params.push(("ifMetagenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_not_match {
-            params.push(("ifGenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_match {
-            params.push(("ifGenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._generation {
-            params.push(("generation", value.to_string()));
-        }
+
         for &field in ["bucket", "object", "userProject", "provisionalUserProject", "projection", "ifMetagenerationNotMatch", "ifMetagenerationMatch", "ifGenerationNotMatch", "ifGenerationMatch", "generation"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(11 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("object", self._object);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._if_metageneration_not_match.as_ref() {
+            params.push("ifMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_match.as_ref() {
+            params.push("ifMetagenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_not_match.as_ref() {
+            params.push("ifGenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_match.as_ref() {
+            params.push("ifGenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._generation.as_ref() {
+            params.push("generation", value.to_string());
         }
 
-        let (json_field_missing, enable_resource_parsing) = {
-            let mut enable = true;
-            let mut field_present = true;
-            for &(name, ref value) in params.iter() {
-                if name == "alt" {
-                    field_present = false;
-                    if <String as AsRef<str>>::as_ref(&value) != "json" {
-                        enable = false;
-                    }
-                    break;
-                }
+        params.extend(self._additional_params.iter());
+
+        let (alt_field_missing, enable_resource_parsing) = {
+            if let Some(value) = params.get("alt") {
+                (false, value == "json")
+            } else {
+                (true, true)
             }
-            (field_present, enable)
         };
-        if json_field_missing {
-            params.push(("alt", "json".to_string()));
+        if alt_field_missing {
+            params.push("alt", "json");
         }
-
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/{object}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{object}", "object")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["object", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["object", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -14533,21 +14931,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -14563,7 +14967,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -14638,42 +15042,43 @@ where
     /// Makes the operation conditional on whether the object's current metageneration does not match the given value.
     ///
     /// Sets the *if metageneration not match* query property to the given value.
-    pub fn if_metageneration_not_match(mut self, new_value: &str) -> ObjectGetCall<'a, S> {
-        self._if_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_metageneration_not_match(mut self, new_value: i64) -> ObjectGetCall<'a, S> {
+        self._if_metageneration_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current metageneration matches the given value.
     ///
     /// Sets the *if metageneration match* query property to the given value.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> ObjectGetCall<'a, S> {
-        self._if_metageneration_match = Some(new_value.to_string());
+    pub fn if_metageneration_match(mut self, new_value: i64) -> ObjectGetCall<'a, S> {
+        self._if_metageneration_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current generation does not match the given value. If no live object exists, the precondition fails. Setting to 0 makes the operation succeed only if there is a live version of the object.
     ///
     /// Sets the *if generation not match* query property to the given value.
-    pub fn if_generation_not_match(mut self, new_value: &str) -> ObjectGetCall<'a, S> {
-        self._if_generation_not_match = Some(new_value.to_string());
+    pub fn if_generation_not_match(mut self, new_value: i64) -> ObjectGetCall<'a, S> {
+        self._if_generation_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current generation matches the given value. Setting to 0 makes the operation succeed only if there are no live versions of the object.
     ///
     /// Sets the *if generation match* query property to the given value.
-    pub fn if_generation_match(mut self, new_value: &str) -> ObjectGetCall<'a, S> {
-        self._if_generation_match = Some(new_value.to_string());
+    pub fn if_generation_match(mut self, new_value: i64) -> ObjectGetCall<'a, S> {
+        self._if_generation_match = Some(new_value);
         self
     }
     /// If present, selects a specific revision of this object (as opposed to the latest version, the default).
     ///
     /// Sets the *generation* query property to the given value.
-    pub fn generation(mut self, new_value: &str) -> ObjectGetCall<'a, S> {
-        self._generation = Some(new_value.to_string());
+    pub fn generation(mut self, new_value: i64) -> ObjectGetCall<'a, S> {
+        self._generation = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectGetCall<'a, S> {
@@ -14706,25 +15111,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -14733,7 +15149,7 @@ where
 /// Returns an IAM policy for the specified object.
 ///
 /// A builder for the *getIamPolicy* method supported by a *object* resource.
-/// It is not used directly, but through a `ObjectMethods` instance.
+/// It is not used directly, but through a [`ObjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -14745,7 +15161,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -14759,7 +15175,7 @@ where
 /// let result = hub.objects().get_iam_policy("bucket", "object")
 ///              .user_project("aliquyam")
 ///              .provisional_user_project("magna")
-///              .generation("diam")
+///              .generation(-42)
 ///              .doit().await;
 /// # }
 /// ```
@@ -14771,17 +15187,17 @@ pub struct ObjectGetIamPolicyCall<'a, S>
     _object: String,
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
-    _generation: Option<String>,
+    _generation: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectGetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ObjectGetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -14792,78 +15208,63 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objects.getIamPolicy",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("object", self._object.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._generation {
-            params.push(("generation", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "object", "userProject", "provisionalUserProject", "generation"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("object", self._object);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._generation.as_ref() {
+            params.push("generation", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/{object}/iam";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{object}", "object")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["object", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["object", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -14871,21 +15272,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -14901,7 +15308,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -14969,14 +15376,15 @@ where
     /// If present, selects a specific revision of this object (as opposed to the latest version, the default).
     ///
     /// Sets the *generation* query property to the given value.
-    pub fn generation(mut self, new_value: &str) -> ObjectGetIamPolicyCall<'a, S> {
-        self._generation = Some(new_value.to_string());
+    pub fn generation(mut self, new_value: i64) -> ObjectGetIamPolicyCall<'a, S> {
+        self._generation = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectGetIamPolicyCall<'a, S> {
@@ -15009,25 +15417,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectGetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectGetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectGetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectGetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -15036,7 +15455,7 @@ where
 /// Stores a new object and metadata.
 ///
 /// A builder for the *insert* method supported by a *object* resource.
-/// It is not used directly, but through a `ObjectMethods` instance.
+/// It is not used directly, but through a [`ObjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -15050,7 +15469,7 @@ where
 /// use std::fs;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -15073,10 +15492,10 @@ where
 ///              .predefined_acl("tempor")
 ///              .name("sed")
 ///              .kms_key_name("est")
-///              .if_metageneration_not_match("takimata")
-///              .if_metageneration_match("dolor")
-///              .if_generation_not_match("diam")
-///              .if_generation_match("At")
+///              .if_metageneration_not_match(-9)
+///              .if_metageneration_match(-99)
+///              .if_generation_not_match(-79)
+///              .if_generation_match(-77)
 ///              .content_encoding("erat")
 ///              .upload_resumable(fs::File::open("file.ext").unwrap(), "application/octet-stream".parse().unwrap()).await;
 /// # }
@@ -15093,21 +15512,21 @@ pub struct ObjectInsertCall<'a, S>
     _predefined_acl: Option<String>,
     _name: Option<String>,
     _kms_key_name: Option<String>,
-    _if_metageneration_not_match: Option<String>,
-    _if_metageneration_match: Option<String>,
-    _if_generation_not_match: Option<String>,
-    _if_generation_match: Option<String>,
+    _if_metageneration_not_match: Option<i64>,
+    _if_metageneration_match: Option<i64>,
+    _if_generation_not_match: Option<i64>,
+    _if_generation_match: Option<i64>,
     _content_encoding: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectInsertCall<'a, S> {}
 
 impl<'a, S> ObjectInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -15115,103 +15534,88 @@ where
 
 
     /// Perform the operation you have build so far.
-    async fn doit<RS>(mut self, mut reader: RS, reader_mime_type: mime::Mime, protocol: &'static str) -> client::Result<(hyper::Response<hyper::body::Body>, Object)>
+    async fn doit<RS>(mut self, mut reader: RS, reader_mime_type: mime::Mime, protocol: client::UploadProtocol) -> client::Result<(hyper::Response<hyper::body::Body>, Object)>
 		where RS: client::ReadSeek {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objects.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(15 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._predefined_acl {
-            params.push(("predefinedAcl", value.to_string()));
-        }
-        if let Some(value) = self._name {
-            params.push(("name", value.to_string()));
-        }
-        if let Some(value) = self._kms_key_name {
-            params.push(("kmsKeyName", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_not_match {
-            params.push(("ifMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_match {
-            params.push(("ifMetagenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_not_match {
-            params.push(("ifGenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_match {
-            params.push(("ifGenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._content_encoding {
-            params.push(("contentEncoding", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "userProject", "provisionalUserProject", "projection", "predefinedAcl", "name", "kmsKeyName", "ifMetagenerationNotMatch", "ifMetagenerationMatch", "ifGenerationNotMatch", "ifGenerationMatch", "contentEncoding"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(15 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._predefined_acl.as_ref() {
+            params.push("predefinedAcl", value);
+        }
+        if let Some(value) = self._name.as_ref() {
+            params.push("name", value);
+        }
+        if let Some(value) = self._kms_key_name.as_ref() {
+            params.push("kmsKeyName", value);
+        }
+        if let Some(value) = self._if_metageneration_not_match.as_ref() {
+            params.push("ifMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_match.as_ref() {
+            params.push("ifMetagenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_not_match.as_ref() {
+            params.push("ifGenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_match.as_ref() {
+            params.push("ifGenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._content_encoding.as_ref() {
+            params.push("contentEncoding", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let (mut url, upload_type) =
-            if protocol == "resumable" {
+            if protocol == client::UploadProtocol::Resumable {
                 (self.hub._root_url.clone() + "resumable/upload/storage/v1/b/{bucket}/o", "resumable")
-            } else if protocol == "simple" {
+            } else if protocol == client::UploadProtocol::Simple {
                 (self.hub._root_url.clone() + "upload/storage/v1/b/{bucket}/o", "multipart")
             } else {
                 unreachable!()
             };
-        params.push(("uploadType", upload_type.to_string()));
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        params.push("uploadType", upload_type);
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -15228,14 +15632,14 @@ where
         let mut upload_url: Option<String> = None;
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -15253,43 +15657,48 @@ where
                 } else {
                     let mut mp_reader: client::MultiPartReader = Default::default();
                     let (mut body_reader, content_type) = match protocol {
-                        "simple" => {
+                        client::UploadProtocol::Simple => {
                             mp_reader.reserve_exact(2);
                             let size = reader.seek(io::SeekFrom::End(0)).unwrap();
                         reader.seek(io::SeekFrom::Start(0)).unwrap();
                         
                             mp_reader.add_part(&mut request_value_reader, request_size, json_mime_type.clone())
                                      .add_part(&mut reader, size, reader_mime_type.clone());
-                            let mime_type = mp_reader.mime_type();
-                            (&mut mp_reader as &mut (dyn io::Read + Send), (CONTENT_TYPE, mime_type.to_string()))
+                            (&mut mp_reader as &mut (dyn io::Read + Send), client::MultiPartReader::mime_type())
                         },
-                        _ => (&mut request_value_reader as &mut (dyn io::Read + Send), (CONTENT_TYPE, json_mime_type.to_string())),
+                        _ => (&mut request_value_reader as &mut (dyn io::Read + Send), json_mime_type.clone()),
                     };
                     let client = &self.hub.client;
                     dlg.pre_request();
-                    let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                            .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                    let mut req_builder = hyper::Request::builder()
+                        .method(hyper::Method::POST)
+                        .uri(url.as_str())
+                        .header(USER_AGENT, self.hub._user_agent.clone());
+    
+                    if let Some(token) = token.as_ref() {
+                        req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                    }
     
                     upload_url_from_server = true;
-                    if protocol == "resumable" {
+                    if protocol == client::UploadProtocol::Resumable {
                         req_builder = req_builder.header("X-Upload-Content-Type", format!("{}", reader_mime_type));
                     }
     
                             let mut body_reader_bytes = vec![];
                             body_reader.read_to_end(&mut body_reader_bytes).unwrap();
                             let request = req_builder
-                            .header(content_type.0, content_type.1.to_string())
-                            .body(hyper::body::Body::from(body_reader_bytes));
+                                .header(CONTENT_TYPE, content_type.to_string())
+                                .body(hyper::body::Body::from(body_reader_bytes));
     
                     client.request(request.unwrap()).await
-                    
+    
                 }
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -15305,7 +15714,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -15316,7 +15725,7 @@ where
                             None => Err(client::Error::Failure(restored_response)),
                         }
                     }
-                    if protocol == "resumable" {
+                    if protocol == client::UploadProtocol::Resumable {
                         let size = reader.seek(io::SeekFrom::End(0)).unwrap();
                         reader.seek(io::SeekFrom::Start(0)).unwrap();
                         
@@ -15332,7 +15741,8 @@ where
                                 start_at: if upload_url_from_server { Some(0) } else { None },
                                 auth: &self.hub.auth,
                                 user_agent: &self.hub._user_agent,
-                                auth_header: format!("Bearer {}", token.as_str()),
+                                // TODO: Check this assumption
+                                auth_header: format!("Bearer {}", token.ok_or_else(|| client::Error::MissingToken("resumable upload requires token".into()))?.as_str()),
                                 url: url_str,
                                 reader: &mut reader,
                                 media_type: reader_mime_type.clone(),
@@ -15391,7 +15801,7 @@ where
     /// * *valid mime types*: '*/*'
     pub async fn upload_resumable<RS>(self, resumeable_stream: RS, mime_type: mime::Mime) -> client::Result<(hyper::Response<hyper::body::Body>, Object)>
                 where RS: client::ReadSeek {
-        self.doit(resumeable_stream, mime_type, "resumable").await
+        self.doit(resumeable_stream, mime_type, client::UploadProtocol::Resumable).await
     }
     /// Upload media all at once.
     /// If the upload fails for whichever reason, all progress is lost.
@@ -15401,7 +15811,7 @@ where
     /// * *valid mime types*: '*/*'
     pub async fn upload<RS>(self, stream: RS, mime_type: mime::Mime) -> client::Result<(hyper::Response<hyper::body::Body>, Object)>
                 where RS: client::ReadSeek {
-        self.doit(stream, mime_type, "simple").await
+        self.doit(stream, mime_type, client::UploadProtocol::Simple).await
     }
 
     ///
@@ -15468,29 +15878,29 @@ where
     /// Makes the operation conditional on whether the object's current metageneration does not match the given value.
     ///
     /// Sets the *if metageneration not match* query property to the given value.
-    pub fn if_metageneration_not_match(mut self, new_value: &str) -> ObjectInsertCall<'a, S> {
-        self._if_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_metageneration_not_match(mut self, new_value: i64) -> ObjectInsertCall<'a, S> {
+        self._if_metageneration_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current metageneration matches the given value.
     ///
     /// Sets the *if metageneration match* query property to the given value.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> ObjectInsertCall<'a, S> {
-        self._if_metageneration_match = Some(new_value.to_string());
+    pub fn if_metageneration_match(mut self, new_value: i64) -> ObjectInsertCall<'a, S> {
+        self._if_metageneration_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current generation does not match the given value. If no live object exists, the precondition fails. Setting to 0 makes the operation succeed only if there is a live version of the object.
     ///
     /// Sets the *if generation not match* query property to the given value.
-    pub fn if_generation_not_match(mut self, new_value: &str) -> ObjectInsertCall<'a, S> {
-        self._if_generation_not_match = Some(new_value.to_string());
+    pub fn if_generation_not_match(mut self, new_value: i64) -> ObjectInsertCall<'a, S> {
+        self._if_generation_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current generation matches the given value. Setting to 0 makes the operation succeed only if there are no live versions of the object.
     ///
     /// Sets the *if generation match* query property to the given value.
-    pub fn if_generation_match(mut self, new_value: &str) -> ObjectInsertCall<'a, S> {
-        self._if_generation_match = Some(new_value.to_string());
+    pub fn if_generation_match(mut self, new_value: i64) -> ObjectInsertCall<'a, S> {
+        self._if_generation_match = Some(new_value);
         self
     }
     /// If set, sets the contentEncoding property of the final object to this value. Setting this parameter is equivalent to setting the contentEncoding metadata property. This can be useful when uploading an object with uploadType=media to indicate the encoding of the content being uploaded.
@@ -15503,7 +15913,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectInsertCall<'a, S> {
@@ -15536,25 +15947,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -15563,7 +15985,7 @@ where
 /// Retrieves a list of objects matching the criteria.
 ///
 /// A builder for the *list* method supported by a *object* resource.
-/// It is not used directly, but through a `ObjectMethods` instance.
+/// It is not used directly, but through a [`ObjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -15575,7 +15997,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -15619,14 +16041,14 @@ pub struct ObjectListCall<'a, S>
     _delimiter: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectListCall<'a, S> {}
 
 impl<'a, S> ObjectListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -15637,101 +16059,86 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Objects)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objects.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(14 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._versions {
-            params.push(("versions", value.to_string()));
-        }
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._start_offset {
-            params.push(("startOffset", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._prefix {
-            params.push(("prefix", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
-        if let Some(value) = self._include_trailing_delimiter {
-            params.push(("includeTrailingDelimiter", value.to_string()));
-        }
-        if let Some(value) = self._end_offset {
-            params.push(("endOffset", value.to_string()));
-        }
-        if let Some(value) = self._delimiter {
-            params.push(("delimiter", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "versions", "userProject", "startOffset", "provisionalUserProject", "projection", "prefix", "pageToken", "maxResults", "includeTrailingDelimiter", "endOffset", "delimiter"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(14 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._versions.as_ref() {
+            params.push("versions", value.to_string());
+        }
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._start_offset.as_ref() {
+            params.push("startOffset", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._prefix.as_ref() {
+            params.push("prefix", value);
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
+        }
+        if let Some(value) = self._include_trailing_delimiter.as_ref() {
+            params.push("includeTrailingDelimiter", value.to_string());
+        }
+        if let Some(value) = self._end_offset.as_ref() {
+            params.push("endOffset", value);
+        }
+        if let Some(value) = self._delimiter.as_ref() {
+            params.push("delimiter", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -15739,21 +16146,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -15769,7 +16182,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -15890,7 +16303,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectListCall<'a, S> {
@@ -15923,25 +16337,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -15950,7 +16375,7 @@ where
 /// Patches an object's metadata.
 ///
 /// A builder for the *patch* method supported by a *object* resource.
-/// It is not used directly, but through a `ObjectMethods` instance.
+/// It is not used directly, but through a [`ObjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -15963,7 +16388,7 @@ where
 /// use storage1::api::Object;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -15984,11 +16409,11 @@ where
 ///              .provisional_user_project("kasd")
 ///              .projection("amet")
 ///              .predefined_acl("Lorem")
-///              .if_metageneration_not_match("justo")
-///              .if_metageneration_match("invidunt")
-///              .if_generation_not_match("sed")
-///              .if_generation_match("nonumy")
-///              .generation("sea")
+///              .if_metageneration_not_match(-21)
+///              .if_metageneration_match(-88)
+///              .if_generation_not_match(-1)
+///              .if_generation_match(-80)
+///              .generation(-91)
 ///              .doit().await;
 /// # }
 /// ```
@@ -16003,21 +16428,21 @@ pub struct ObjectPatchCall<'a, S>
     _provisional_user_project: Option<String>,
     _projection: Option<String>,
     _predefined_acl: Option<String>,
-    _if_metageneration_not_match: Option<String>,
-    _if_metageneration_match: Option<String>,
-    _if_generation_not_match: Option<String>,
-    _if_generation_match: Option<String>,
-    _generation: Option<String>,
+    _if_metageneration_not_match: Option<i64>,
+    _if_metageneration_match: Option<i64>,
+    _if_generation_not_match: Option<i64>,
+    _if_generation_match: Option<i64>,
+    _generation: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectPatchCall<'a, S> {}
 
 impl<'a, S> ObjectPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -16028,86 +16453,71 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Object)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objects.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(14 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("object", self._object.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._predefined_acl {
-            params.push(("predefinedAcl", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_not_match {
-            params.push(("ifMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_match {
-            params.push(("ifMetagenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_not_match {
-            params.push(("ifGenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_match {
-            params.push(("ifGenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._generation {
-            params.push(("generation", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "object", "userProject", "provisionalUserProject", "projection", "predefinedAcl", "ifMetagenerationNotMatch", "ifMetagenerationMatch", "ifGenerationNotMatch", "ifGenerationMatch", "generation"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(14 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("object", self._object);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._predefined_acl.as_ref() {
+            params.push("predefinedAcl", value);
+        }
+        if let Some(value) = self._if_metageneration_not_match.as_ref() {
+            params.push("ifMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_match.as_ref() {
+            params.push("ifMetagenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_not_match.as_ref() {
+            params.push("ifGenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_match.as_ref() {
+            params.push("ifGenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._generation.as_ref() {
+            params.push("generation", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/{object}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{object}", "object")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["object", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["object", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -16121,14 +16531,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -16137,23 +16547,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -16169,7 +16585,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -16260,42 +16676,43 @@ where
     /// Makes the operation conditional on whether the object's current metageneration does not match the given value.
     ///
     /// Sets the *if metageneration not match* query property to the given value.
-    pub fn if_metageneration_not_match(mut self, new_value: &str) -> ObjectPatchCall<'a, S> {
-        self._if_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_metageneration_not_match(mut self, new_value: i64) -> ObjectPatchCall<'a, S> {
+        self._if_metageneration_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current metageneration matches the given value.
     ///
     /// Sets the *if metageneration match* query property to the given value.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> ObjectPatchCall<'a, S> {
-        self._if_metageneration_match = Some(new_value.to_string());
+    pub fn if_metageneration_match(mut self, new_value: i64) -> ObjectPatchCall<'a, S> {
+        self._if_metageneration_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current generation does not match the given value. If no live object exists, the precondition fails. Setting to 0 makes the operation succeed only if there is a live version of the object.
     ///
     /// Sets the *if generation not match* query property to the given value.
-    pub fn if_generation_not_match(mut self, new_value: &str) -> ObjectPatchCall<'a, S> {
-        self._if_generation_not_match = Some(new_value.to_string());
+    pub fn if_generation_not_match(mut self, new_value: i64) -> ObjectPatchCall<'a, S> {
+        self._if_generation_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current generation matches the given value. Setting to 0 makes the operation succeed only if there are no live versions of the object.
     ///
     /// Sets the *if generation match* query property to the given value.
-    pub fn if_generation_match(mut self, new_value: &str) -> ObjectPatchCall<'a, S> {
-        self._if_generation_match = Some(new_value.to_string());
+    pub fn if_generation_match(mut self, new_value: i64) -> ObjectPatchCall<'a, S> {
+        self._if_generation_match = Some(new_value);
         self
     }
     /// If present, selects a specific revision of this object (as opposed to the latest version, the default).
     ///
     /// Sets the *generation* query property to the given value.
-    pub fn generation(mut self, new_value: &str) -> ObjectPatchCall<'a, S> {
-        self._generation = Some(new_value.to_string());
+    pub fn generation(mut self, new_value: i64) -> ObjectPatchCall<'a, S> {
+        self._generation = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectPatchCall<'a, S> {
@@ -16328,25 +16745,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -16355,7 +16783,7 @@ where
 /// Rewrites a source object to a destination object. Optionally overrides metadata.
 ///
 /// A builder for the *rewrite* method supported by a *object* resource.
-/// It is not used directly, but through a `ObjectMethods` instance.
+/// It is not used directly, but through a [`ObjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -16368,7 +16796,7 @@ where
 /// use storage1::api::Object;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -16385,22 +16813,22 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.objects().rewrite(req, "sourceBucket", "sourceObject", "destinationBucket", "destinationObject")
-///              .user_project("At")
-///              .source_generation("erat")
-///              .rewrite_token("clita")
-///              .provisional_user_project("vero")
-///              .projection("invidunt")
-///              .max_bytes_rewritten_per_call("nonumy")
-///              .if_source_metageneration_not_match("erat")
-///              .if_source_metageneration_match("erat")
-///              .if_source_generation_not_match("dolores")
-///              .if_source_generation_match("ipsum")
-///              .if_metageneration_not_match("voluptua.")
-///              .if_metageneration_match("eos")
-///              .if_generation_not_match("duo")
-///              .if_generation_match("elitr")
-///              .destination_predefined_acl("consetetur")
-///              .destination_kms_key_name("et")
+///              .user_project("ea")
+///              .source_generation(-77)
+///              .rewrite_token("erat")
+///              .provisional_user_project("clita")
+///              .projection("vero")
+///              .max_bytes_rewritten_per_call(-88)
+///              .if_source_metageneration_not_match(-91)
+///              .if_source_metageneration_match(-81)
+///              .if_source_generation_not_match(-31)
+///              .if_source_generation_match(-19)
+///              .if_metageneration_not_match(-50)
+///              .if_metageneration_match(-28)
+///              .if_generation_not_match(-25)
+///              .if_generation_match(-70)
+///              .destination_predefined_acl("elitr")
+///              .destination_kms_key_name("consetetur")
 ///              .doit().await;
 /// # }
 /// ```
@@ -16414,31 +16842,31 @@ pub struct ObjectRewriteCall<'a, S>
     _destination_bucket: String,
     _destination_object: String,
     _user_project: Option<String>,
-    _source_generation: Option<String>,
+    _source_generation: Option<i64>,
     _rewrite_token: Option<String>,
     _provisional_user_project: Option<String>,
     _projection: Option<String>,
-    _max_bytes_rewritten_per_call: Option<String>,
-    _if_source_metageneration_not_match: Option<String>,
-    _if_source_metageneration_match: Option<String>,
-    _if_source_generation_not_match: Option<String>,
-    _if_source_generation_match: Option<String>,
-    _if_metageneration_not_match: Option<String>,
-    _if_metageneration_match: Option<String>,
-    _if_generation_not_match: Option<String>,
-    _if_generation_match: Option<String>,
+    _max_bytes_rewritten_per_call: Option<i64>,
+    _if_source_metageneration_not_match: Option<i64>,
+    _if_source_metageneration_match: Option<i64>,
+    _if_source_generation_not_match: Option<i64>,
+    _if_source_generation_match: Option<i64>,
+    _if_metageneration_not_match: Option<i64>,
+    _if_metageneration_match: Option<i64>,
+    _if_generation_not_match: Option<i64>,
+    _if_generation_match: Option<i64>,
     _destination_predefined_acl: Option<String>,
     _destination_kms_key_name: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectRewriteCall<'a, S> {}
 
 impl<'a, S> ObjectRewriteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -16449,109 +16877,94 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, RewriteResponse)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objects.rewrite",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(23 + self._additional_params.len());
-        params.push(("sourceBucket", self._source_bucket.to_string()));
-        params.push(("sourceObject", self._source_object.to_string()));
-        params.push(("destinationBucket", self._destination_bucket.to_string()));
-        params.push(("destinationObject", self._destination_object.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._source_generation {
-            params.push(("sourceGeneration", value.to_string()));
-        }
-        if let Some(value) = self._rewrite_token {
-            params.push(("rewriteToken", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._max_bytes_rewritten_per_call {
-            params.push(("maxBytesRewrittenPerCall", value.to_string()));
-        }
-        if let Some(value) = self._if_source_metageneration_not_match {
-            params.push(("ifSourceMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_source_metageneration_match {
-            params.push(("ifSourceMetagenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_source_generation_not_match {
-            params.push(("ifSourceGenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_source_generation_match {
-            params.push(("ifSourceGenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_not_match {
-            params.push(("ifMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_match {
-            params.push(("ifMetagenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_not_match {
-            params.push(("ifGenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_match {
-            params.push(("ifGenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._destination_predefined_acl {
-            params.push(("destinationPredefinedAcl", value.to_string()));
-        }
-        if let Some(value) = self._destination_kms_key_name {
-            params.push(("destinationKmsKeyName", value.to_string()));
-        }
+
         for &field in ["alt", "sourceBucket", "sourceObject", "destinationBucket", "destinationObject", "userProject", "sourceGeneration", "rewriteToken", "provisionalUserProject", "projection", "maxBytesRewrittenPerCall", "ifSourceMetagenerationNotMatch", "ifSourceMetagenerationMatch", "ifSourceGenerationNotMatch", "ifSourceGenerationMatch", "ifMetagenerationNotMatch", "ifMetagenerationMatch", "ifGenerationNotMatch", "ifGenerationMatch", "destinationPredefinedAcl", "destinationKmsKeyName"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(23 + self._additional_params.len());
+        params.push("sourceBucket", self._source_bucket);
+        params.push("sourceObject", self._source_object);
+        params.push("destinationBucket", self._destination_bucket);
+        params.push("destinationObject", self._destination_object);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._source_generation.as_ref() {
+            params.push("sourceGeneration", value.to_string());
+        }
+        if let Some(value) = self._rewrite_token.as_ref() {
+            params.push("rewriteToken", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._max_bytes_rewritten_per_call.as_ref() {
+            params.push("maxBytesRewrittenPerCall", value.to_string());
+        }
+        if let Some(value) = self._if_source_metageneration_not_match.as_ref() {
+            params.push("ifSourceMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_source_metageneration_match.as_ref() {
+            params.push("ifSourceMetagenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._if_source_generation_not_match.as_ref() {
+            params.push("ifSourceGenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_source_generation_match.as_ref() {
+            params.push("ifSourceGenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_not_match.as_ref() {
+            params.push("ifMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_match.as_ref() {
+            params.push("ifMetagenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_not_match.as_ref() {
+            params.push("ifGenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_match.as_ref() {
+            params.push("ifGenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._destination_predefined_acl.as_ref() {
+            params.push("destinationPredefinedAcl", value);
+        }
+        if let Some(value) = self._destination_kms_key_name.as_ref() {
+            params.push("destinationKmsKeyName", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{sourceBucket}/o/{sourceObject}/rewriteTo/b/{destinationBucket}/o/{destinationObject}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{sourceBucket}", "sourceBucket"), ("{sourceObject}", "sourceObject"), ("{destinationBucket}", "destinationBucket"), ("{destinationObject}", "destinationObject")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(4);
-            for param_name in ["destinationObject", "destinationBucket", "sourceObject", "sourceBucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["destinationObject", "destinationBucket", "sourceObject", "sourceBucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -16565,14 +16978,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -16581,23 +16994,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -16613,7 +17032,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -16703,8 +17122,8 @@ where
     /// If present, selects a specific revision of the source object (as opposed to the latest version, the default).
     ///
     /// Sets the *source generation* query property to the given value.
-    pub fn source_generation(mut self, new_value: &str) -> ObjectRewriteCall<'a, S> {
-        self._source_generation = Some(new_value.to_string());
+    pub fn source_generation(mut self, new_value: i64) -> ObjectRewriteCall<'a, S> {
+        self._source_generation = Some(new_value);
         self
     }
     /// Include this field (from the previous rewrite response) on each rewrite request after the first one, until the rewrite response 'done' flag is true. Calls that provide a rewriteToken can omit all other request fields, but if included those fields must match the values provided in the first rewrite request.
@@ -16731,64 +17150,64 @@ where
     /// The maximum number of bytes that will be rewritten per rewrite request. Most callers shouldn't need to specify this parameter - it is primarily in place to support testing. If specified the value must be an integral multiple of 1 MiB (1048576). Also, this only applies to requests where the source and destination span locations and/or storage classes. Finally, this value must not change across rewrite calls else you'll get an error that the rewriteToken is invalid.
     ///
     /// Sets the *max bytes rewritten per call* query property to the given value.
-    pub fn max_bytes_rewritten_per_call(mut self, new_value: &str) -> ObjectRewriteCall<'a, S> {
-        self._max_bytes_rewritten_per_call = Some(new_value.to_string());
+    pub fn max_bytes_rewritten_per_call(mut self, new_value: i64) -> ObjectRewriteCall<'a, S> {
+        self._max_bytes_rewritten_per_call = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the source object's current metageneration does not match the given value.
     ///
     /// Sets the *if source metageneration not match* query property to the given value.
-    pub fn if_source_metageneration_not_match(mut self, new_value: &str) -> ObjectRewriteCall<'a, S> {
-        self._if_source_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_source_metageneration_not_match(mut self, new_value: i64) -> ObjectRewriteCall<'a, S> {
+        self._if_source_metageneration_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the source object's current metageneration matches the given value.
     ///
     /// Sets the *if source metageneration match* query property to the given value.
-    pub fn if_source_metageneration_match(mut self, new_value: &str) -> ObjectRewriteCall<'a, S> {
-        self._if_source_metageneration_match = Some(new_value.to_string());
+    pub fn if_source_metageneration_match(mut self, new_value: i64) -> ObjectRewriteCall<'a, S> {
+        self._if_source_metageneration_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the source object's current generation does not match the given value.
     ///
     /// Sets the *if source generation not match* query property to the given value.
-    pub fn if_source_generation_not_match(mut self, new_value: &str) -> ObjectRewriteCall<'a, S> {
-        self._if_source_generation_not_match = Some(new_value.to_string());
+    pub fn if_source_generation_not_match(mut self, new_value: i64) -> ObjectRewriteCall<'a, S> {
+        self._if_source_generation_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the source object's current generation matches the given value.
     ///
     /// Sets the *if source generation match* query property to the given value.
-    pub fn if_source_generation_match(mut self, new_value: &str) -> ObjectRewriteCall<'a, S> {
-        self._if_source_generation_match = Some(new_value.to_string());
+    pub fn if_source_generation_match(mut self, new_value: i64) -> ObjectRewriteCall<'a, S> {
+        self._if_source_generation_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the destination object's current metageneration does not match the given value.
     ///
     /// Sets the *if metageneration not match* query property to the given value.
-    pub fn if_metageneration_not_match(mut self, new_value: &str) -> ObjectRewriteCall<'a, S> {
-        self._if_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_metageneration_not_match(mut self, new_value: i64) -> ObjectRewriteCall<'a, S> {
+        self._if_metageneration_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the destination object's current metageneration matches the given value.
     ///
     /// Sets the *if metageneration match* query property to the given value.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> ObjectRewriteCall<'a, S> {
-        self._if_metageneration_match = Some(new_value.to_string());
+    pub fn if_metageneration_match(mut self, new_value: i64) -> ObjectRewriteCall<'a, S> {
+        self._if_metageneration_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current generation does not match the given value. If no live object exists, the precondition fails. Setting to 0 makes the operation succeed only if there is a live version of the object.
     ///
     /// Sets the *if generation not match* query property to the given value.
-    pub fn if_generation_not_match(mut self, new_value: &str) -> ObjectRewriteCall<'a, S> {
-        self._if_generation_not_match = Some(new_value.to_string());
+    pub fn if_generation_not_match(mut self, new_value: i64) -> ObjectRewriteCall<'a, S> {
+        self._if_generation_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current generation matches the given value. Setting to 0 makes the operation succeed only if there are no live versions of the object.
     ///
     /// Sets the *if generation match* query property to the given value.
-    pub fn if_generation_match(mut self, new_value: &str) -> ObjectRewriteCall<'a, S> {
-        self._if_generation_match = Some(new_value.to_string());
+    pub fn if_generation_match(mut self, new_value: i64) -> ObjectRewriteCall<'a, S> {
+        self._if_generation_match = Some(new_value);
         self
     }
     /// Apply a predefined set of access controls to the destination object.
@@ -16808,7 +17227,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectRewriteCall<'a, S> {
@@ -16841,25 +17261,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectRewriteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectRewriteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectRewriteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectRewriteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -16868,7 +17299,7 @@ where
 /// Updates an IAM policy for the specified object.
 ///
 /// A builder for the *setIamPolicy* method supported by a *object* resource.
-/// It is not used directly, but through a `ObjectMethods` instance.
+/// It is not used directly, but through a [`ObjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -16881,7 +17312,7 @@ where
 /// use storage1::api::Policy;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -16898,9 +17329,9 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.objects().set_iam_policy(req, "bucket", "object")
-///              .user_project("takimata")
-///              .provisional_user_project("erat")
-///              .generation("diam")
+///              .user_project("sit")
+///              .provisional_user_project("takimata")
+///              .generation(-31)
 ///              .doit().await;
 /// # }
 /// ```
@@ -16913,17 +17344,17 @@ pub struct ObjectSetIamPolicyCall<'a, S>
     _object: String,
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
-    _generation: Option<String>,
+    _generation: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectSetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ObjectSetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -16934,68 +17365,53 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objects.setIamPolicy",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(8 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("object", self._object.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._generation {
-            params.push(("generation", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "object", "userProject", "provisionalUserProject", "generation"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(8 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("object", self._object);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._generation.as_ref() {
+            params.push("generation", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/{object}/iam";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{object}", "object")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["object", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["object", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -17009,14 +17425,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -17025,23 +17441,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -17057,7 +17479,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -17134,14 +17556,15 @@ where
     /// If present, selects a specific revision of this object (as opposed to the latest version, the default).
     ///
     /// Sets the *generation* query property to the given value.
-    pub fn generation(mut self, new_value: &str) -> ObjectSetIamPolicyCall<'a, S> {
-        self._generation = Some(new_value.to_string());
+    pub fn generation(mut self, new_value: i64) -> ObjectSetIamPolicyCall<'a, S> {
+        self._generation = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectSetIamPolicyCall<'a, S> {
@@ -17174,25 +17597,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectSetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectSetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectSetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectSetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -17201,7 +17635,7 @@ where
 /// Tests a set of permissions on the given object to see which, if any, are held by the caller.
 ///
 /// A builder for the *testIamPermissions* method supported by a *object* resource.
-/// It is not used directly, but through a `ObjectMethods` instance.
+/// It is not used directly, but through a [`ObjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -17213,7 +17647,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -17224,10 +17658,10 @@ where
 /// // You can configure optional parameters by calling the respective setters at will, and
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
-/// let result = hub.objects().test_iam_permissions("bucket", "object", &vec!["At".into()])
-///              .user_project("diam")
+/// let result = hub.objects().test_iam_permissions("bucket", "object", &vec!["Lorem".into()])
+///              .user_project("At")
 ///              .provisional_user_project("diam")
-///              .generation("sed")
+///              .generation(-92)
 ///              .doit().await;
 /// # }
 /// ```
@@ -17240,17 +17674,17 @@ pub struct ObjectTestIamPermissionCall<'a, S>
     _permissions: Vec<String>,
     _user_project: Option<String>,
     _provisional_user_project: Option<String>,
-    _generation: Option<String>,
+    _generation: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectTestIamPermissionCall<'a, S> {}
 
 impl<'a, S> ObjectTestIamPermissionCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -17261,83 +17695,68 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, TestIamPermissionsResponse)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objects.testIamPermissions",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(8 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("object", self._object.to_string()));
-        if self._permissions.len() > 0 {
-            for f in self._permissions.iter() {
-                params.push(("permissions", f.to_string()));
-            }
-        }
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._generation {
-            params.push(("generation", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "object", "permissions", "userProject", "provisionalUserProject", "generation"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(8 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("object", self._object);
+        if self._permissions.len() > 0 {
+            for f in self._permissions.iter() {
+                params.push("permissions", f);
+            }
+        }
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._generation.as_ref() {
+            params.push("generation", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/{object}/iam/testPermissions";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{object}", "object")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["object", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["object", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -17345,21 +17764,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -17375,7 +17800,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -17454,14 +17879,15 @@ where
     /// If present, selects a specific revision of this object (as opposed to the latest version, the default).
     ///
     /// Sets the *generation* query property to the given value.
-    pub fn generation(mut self, new_value: &str) -> ObjectTestIamPermissionCall<'a, S> {
-        self._generation = Some(new_value.to_string());
+    pub fn generation(mut self, new_value: i64) -> ObjectTestIamPermissionCall<'a, S> {
+        self._generation = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectTestIamPermissionCall<'a, S> {
@@ -17494,25 +17920,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectTestIamPermissionCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectTestIamPermissionCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectTestIamPermissionCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectTestIamPermissionCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -17521,7 +17958,7 @@ where
 /// Updates an object's metadata.
 ///
 /// A builder for the *update* method supported by a *object* resource.
-/// It is not used directly, but through a `ObjectMethods` instance.
+/// It is not used directly, but through a [`ObjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -17534,7 +17971,7 @@ where
 /// use storage1::api::Object;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -17551,15 +17988,15 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.objects().update(req, "bucket", "object")
-///              .user_project("dolore")
-///              .provisional_user_project("ipsum")
-///              .projection("ea")
-///              .predefined_acl("At")
-///              .if_metageneration_not_match("sit")
-///              .if_metageneration_match("sit")
-///              .if_generation_not_match("Lorem")
-///              .if_generation_match("Stet")
-///              .generation("duo")
+///              .user_project("ea")
+///              .provisional_user_project("dolore")
+///              .projection("ipsum")
+///              .predefined_acl("ea")
+///              .if_metageneration_not_match(-27)
+///              .if_metageneration_match(-53)
+///              .if_generation_not_match(-98)
+///              .if_generation_match(-101)
+///              .generation(-15)
 ///              .doit().await;
 /// # }
 /// ```
@@ -17574,21 +18011,21 @@ pub struct ObjectUpdateCall<'a, S>
     _provisional_user_project: Option<String>,
     _projection: Option<String>,
     _predefined_acl: Option<String>,
-    _if_metageneration_not_match: Option<String>,
-    _if_metageneration_match: Option<String>,
-    _if_generation_not_match: Option<String>,
-    _if_generation_match: Option<String>,
-    _generation: Option<String>,
+    _if_metageneration_not_match: Option<i64>,
+    _if_metageneration_match: Option<i64>,
+    _if_generation_not_match: Option<i64>,
+    _if_generation_match: Option<i64>,
+    _generation: Option<i64>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectUpdateCall<'a, S> {}
 
 impl<'a, S> ObjectUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -17599,86 +18036,71 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Object)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objects.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(14 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        params.push(("object", self._object.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._predefined_acl {
-            params.push(("predefinedAcl", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_not_match {
-            params.push(("ifMetagenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_metageneration_match {
-            params.push(("ifMetagenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_not_match {
-            params.push(("ifGenerationNotMatch", value.to_string()));
-        }
-        if let Some(value) = self._if_generation_match {
-            params.push(("ifGenerationMatch", value.to_string()));
-        }
-        if let Some(value) = self._generation {
-            params.push(("generation", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "object", "userProject", "provisionalUserProject", "projection", "predefinedAcl", "ifMetagenerationNotMatch", "ifMetagenerationMatch", "ifGenerationNotMatch", "ifGenerationMatch", "generation"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(14 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        params.push("object", self._object);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._predefined_acl.as_ref() {
+            params.push("predefinedAcl", value);
+        }
+        if let Some(value) = self._if_metageneration_not_match.as_ref() {
+            params.push("ifMetagenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_metageneration_match.as_ref() {
+            params.push("ifMetagenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_not_match.as_ref() {
+            params.push("ifGenerationNotMatch", value.to_string());
+        }
+        if let Some(value) = self._if_generation_match.as_ref() {
+            params.push("ifGenerationMatch", value.to_string());
+        }
+        if let Some(value) = self._generation.as_ref() {
+            params.push("generation", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/{object}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket"), ("{object}", "object")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["object", "bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["object", "bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -17692,14 +18114,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -17708,23 +18130,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -17740,7 +18168,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -17831,42 +18259,43 @@ where
     /// Makes the operation conditional on whether the object's current metageneration does not match the given value.
     ///
     /// Sets the *if metageneration not match* query property to the given value.
-    pub fn if_metageneration_not_match(mut self, new_value: &str) -> ObjectUpdateCall<'a, S> {
-        self._if_metageneration_not_match = Some(new_value.to_string());
+    pub fn if_metageneration_not_match(mut self, new_value: i64) -> ObjectUpdateCall<'a, S> {
+        self._if_metageneration_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current metageneration matches the given value.
     ///
     /// Sets the *if metageneration match* query property to the given value.
-    pub fn if_metageneration_match(mut self, new_value: &str) -> ObjectUpdateCall<'a, S> {
-        self._if_metageneration_match = Some(new_value.to_string());
+    pub fn if_metageneration_match(mut self, new_value: i64) -> ObjectUpdateCall<'a, S> {
+        self._if_metageneration_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current generation does not match the given value. If no live object exists, the precondition fails. Setting to 0 makes the operation succeed only if there is a live version of the object.
     ///
     /// Sets the *if generation not match* query property to the given value.
-    pub fn if_generation_not_match(mut self, new_value: &str) -> ObjectUpdateCall<'a, S> {
-        self._if_generation_not_match = Some(new_value.to_string());
+    pub fn if_generation_not_match(mut self, new_value: i64) -> ObjectUpdateCall<'a, S> {
+        self._if_generation_not_match = Some(new_value);
         self
     }
     /// Makes the operation conditional on whether the object's current generation matches the given value. Setting to 0 makes the operation succeed only if there are no live versions of the object.
     ///
     /// Sets the *if generation match* query property to the given value.
-    pub fn if_generation_match(mut self, new_value: &str) -> ObjectUpdateCall<'a, S> {
-        self._if_generation_match = Some(new_value.to_string());
+    pub fn if_generation_match(mut self, new_value: i64) -> ObjectUpdateCall<'a, S> {
+        self._if_generation_match = Some(new_value);
         self
     }
     /// If present, selects a specific revision of this object (as opposed to the latest version, the default).
     ///
     /// Sets the *generation* query property to the given value.
-    pub fn generation(mut self, new_value: &str) -> ObjectUpdateCall<'a, S> {
-        self._generation = Some(new_value.to_string());
+    pub fn generation(mut self, new_value: i64) -> ObjectUpdateCall<'a, S> {
+        self._generation = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectUpdateCall<'a, S> {
@@ -17899,25 +18328,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -17926,7 +18366,7 @@ where
 /// Watch for changes on all objects in a bucket.
 ///
 /// A builder for the *watchAll* method supported by a *object* resource.
-/// It is not used directly, but through a `ObjectMethods` instance.
+/// It is not used directly, but through a [`ObjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -17939,7 +18379,7 @@ where
 /// use storage1::api::Channel;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -17957,15 +18397,15 @@ where
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.objects().watch_all(req, "bucket")
 ///              .versions(false)
-///              .user_project("et")
-///              .start_offset("Lorem")
-///              .provisional_user_project("rebum.")
+///              .user_project("aliquyam")
+///              .start_offset("erat")
+///              .provisional_user_project("ut")
 ///              .projection("et")
-///              .prefix("sed")
-///              .page_token("Stet")
-///              .max_results(19)
-///              .include_trailing_delimiter(false)
-///              .end_offset("sit")
+///              .prefix("Lorem")
+///              .page_token("rebum.")
+///              .max_results(66)
+///              .include_trailing_delimiter(true)
+///              .end_offset("aliquyam")
 ///              .delimiter("kasd")
 ///              .doit().await;
 /// # }
@@ -17989,14 +18429,14 @@ pub struct ObjectWatchAllCall<'a, S>
     _delimiter: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ObjectWatchAllCall<'a, S> {}
 
 impl<'a, S> ObjectWatchAllCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -18007,91 +18447,76 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Channel)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.objects.watchAll",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(15 + self._additional_params.len());
-        params.push(("bucket", self._bucket.to_string()));
-        if let Some(value) = self._versions {
-            params.push(("versions", value.to_string()));
-        }
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._start_offset {
-            params.push(("startOffset", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._prefix {
-            params.push(("prefix", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
-        if let Some(value) = self._include_trailing_delimiter {
-            params.push(("includeTrailingDelimiter", value.to_string()));
-        }
-        if let Some(value) = self._end_offset {
-            params.push(("endOffset", value.to_string()));
-        }
-        if let Some(value) = self._delimiter {
-            params.push(("delimiter", value.to_string()));
-        }
+
         for &field in ["alt", "bucket", "versions", "userProject", "startOffset", "provisionalUserProject", "projection", "prefix", "pageToken", "maxResults", "includeTrailingDelimiter", "endOffset", "delimiter"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(15 + self._additional_params.len());
+        params.push("bucket", self._bucket);
+        if let Some(value) = self._versions.as_ref() {
+            params.push("versions", value.to_string());
+        }
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._start_offset.as_ref() {
+            params.push("startOffset", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._prefix.as_ref() {
+            params.push("prefix", value);
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
+        }
+        if let Some(value) = self._include_trailing_delimiter.as_ref() {
+            params.push("includeTrailingDelimiter", value.to_string());
+        }
+        if let Some(value) = self._end_offset.as_ref() {
+            params.push("endOffset", value);
+        }
+        if let Some(value) = self._delimiter.as_ref() {
+            params.push("delimiter", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "b/{bucket}/o/watch";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{bucket}", "bucket")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["bucket"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["bucket"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -18105,14 +18530,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -18121,23 +18546,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -18153,7 +18584,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -18283,7 +18714,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ObjectWatchAllCall<'a, S> {
@@ -18316,25 +18748,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ObjectWatchAllCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ObjectWatchAllCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ObjectWatchAllCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ObjectWatchAllCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -18343,7 +18786,7 @@ where
 /// Creates a new HMAC key for the specified service account.
 ///
 /// A builder for the *hmacKeys.create* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -18355,7 +18798,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -18367,7 +18810,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().hmac_keys_create("projectId", "serviceAccountEmail")
-///              .user_project("amet")
+///              .user_project("kasd")
 ///              .doit().await;
 /// # }
 /// ```
@@ -18380,14 +18823,14 @@ pub struct ProjectHmacKeyCreateCall<'a, S>
     _user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectHmacKeyCreateCall<'a, S> {}
 
 impl<'a, S> ProjectHmacKeyCreateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -18398,72 +18841,57 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, HmacKey)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.projects.hmacKeys.create",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("projectId", self._project_id.to_string()));
-        params.push(("serviceAccountEmail", self._service_account_email.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
+
         for &field in ["alt", "projectId", "serviceAccountEmail", "userProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("projectId", self._project_id);
+        params.push("serviceAccountEmail", self._service_account_email);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "projects/{projectId}/hmacKeys";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{projectId}", "projectId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["projectId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["projectId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -18471,21 +18899,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -18501,7 +18935,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -18562,7 +18996,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectHmacKeyCreateCall<'a, S> {
@@ -18595,25 +19030,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectHmacKeyCreateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectHmacKeyCreateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectHmacKeyCreateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectHmacKeyCreateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -18622,7 +19068,7 @@ where
 /// Deletes an HMAC key.
 ///
 /// A builder for the *hmacKeys.delete* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -18634,7 +19080,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -18646,7 +19092,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().hmac_keys_delete("projectId", "accessId")
-///              .user_project("sea")
+///              .user_project("amet")
 ///              .doit().await;
 /// # }
 /// ```
@@ -18659,14 +19105,14 @@ pub struct ProjectHmacKeyDeleteCall<'a, S>
     _user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectHmacKeyDeleteCall<'a, S> {}
 
 impl<'a, S> ProjectHmacKeyDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -18677,71 +19123,56 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.projects.hmacKeys.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("projectId", self._project_id.to_string()));
-        params.push(("accessId", self._access_id.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
+
         for &field in ["projectId", "accessId", "userProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("projectId", self._project_id);
+        params.push("accessId", self._access_id);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
         }
 
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "projects/{projectId}/hmacKeys/{accessId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{projectId}", "projectId"), ("{accessId}", "accessId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["accessId", "projectId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["accessId", "projectId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -18749,21 +19180,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -18779,7 +19216,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -18830,7 +19267,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectHmacKeyDeleteCall<'a, S> {
@@ -18863,25 +19301,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectHmacKeyDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectHmacKeyDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectHmacKeyDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectHmacKeyDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -18890,7 +19339,7 @@ where
 /// Retrieves an HMAC key's metadata
 ///
 /// A builder for the *hmacKeys.get* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -18902,7 +19351,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -18914,7 +19363,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().hmac_keys_get("projectId", "accessId")
-///              .user_project("et")
+///              .user_project("sea")
 ///              .doit().await;
 /// # }
 /// ```
@@ -18927,14 +19376,14 @@ pub struct ProjectHmacKeyGetCall<'a, S>
     _user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectHmacKeyGetCall<'a, S> {}
 
 impl<'a, S> ProjectHmacKeyGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -18945,72 +19394,57 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, HmacKeyMetadata)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.projects.hmacKeys.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("projectId", self._project_id.to_string()));
-        params.push(("accessId", self._access_id.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
+
         for &field in ["alt", "projectId", "accessId", "userProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("projectId", self._project_id);
+        params.push("accessId", self._access_id);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "projects/{projectId}/hmacKeys/{accessId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{projectId}", "projectId"), ("{accessId}", "accessId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["accessId", "projectId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["accessId", "projectId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -19018,21 +19452,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -19048,7 +19488,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -19109,7 +19549,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectHmacKeyGetCall<'a, S> {
@@ -19142,25 +19583,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectHmacKeyGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectHmacKeyGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectHmacKeyGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectHmacKeyGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -19169,7 +19621,7 @@ where
 /// Retrieves a list of HMAC keys matching the criteria.
 ///
 /// A builder for the *hmacKeys.list* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -19181,7 +19633,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -19193,11 +19645,11 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().hmac_keys_list("projectId")
-///              .user_project("eirmod")
+///              .user_project("ipsum")
 ///              .show_deleted_keys(false)
-///              .service_account_email("dolor")
+///              .service_account_email("eirmod")
 ///              .page_token("dolor")
-///              .max_results(55)
+///              .max_results(6)
 ///              .doit().await;
 /// # }
 /// ```
@@ -19213,14 +19665,14 @@ pub struct ProjectHmacKeyListCall<'a, S>
     _max_results: Option<u32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectHmacKeyListCall<'a, S> {}
 
 impl<'a, S> ProjectHmacKeyListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -19231,83 +19683,68 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, HmacKeysMetadata)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.projects.hmacKeys.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(8 + self._additional_params.len());
-        params.push(("projectId", self._project_id.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._show_deleted_keys {
-            params.push(("showDeletedKeys", value.to_string()));
-        }
-        if let Some(value) = self._service_account_email {
-            params.push(("serviceAccountEmail", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
+
         for &field in ["alt", "projectId", "userProject", "showDeletedKeys", "serviceAccountEmail", "pageToken", "maxResults"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(8 + self._additional_params.len());
+        params.push("projectId", self._project_id);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._show_deleted_keys.as_ref() {
+            params.push("showDeletedKeys", value.to_string());
+        }
+        if let Some(value) = self._service_account_email.as_ref() {
+            params.push("serviceAccountEmail", value);
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "projects/{projectId}/hmacKeys";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{projectId}", "projectId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["projectId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["projectId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -19315,21 +19752,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -19345,7 +19788,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -19424,7 +19867,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectHmacKeyListCall<'a, S> {
@@ -19457,25 +19901,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectHmacKeyListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectHmacKeyListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectHmacKeyListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectHmacKeyListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -19484,7 +19939,7 @@ where
 /// Updates the state of an HMAC key. See the HMAC Key resource descriptor for valid states.
 ///
 /// A builder for the *hmacKeys.update* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -19497,7 +19952,7 @@ where
 /// use storage1::api::HmacKeyMetadata;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -19514,7 +19969,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().hmac_keys_update(req, "projectId", "accessId")
-///              .user_project("Lorem")
+///              .user_project("consetetur")
 ///              .doit().await;
 /// # }
 /// ```
@@ -19528,14 +19983,14 @@ pub struct ProjectHmacKeyUpdateCall<'a, S>
     _user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectHmacKeyUpdateCall<'a, S> {}
 
 impl<'a, S> ProjectHmacKeyUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -19546,62 +20001,47 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, HmacKeyMetadata)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.projects.hmacKeys.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("projectId", self._project_id.to_string()));
-        params.push(("accessId", self._access_id.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
+
         for &field in ["alt", "projectId", "accessId", "userProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("projectId", self._project_id);
+        params.push("accessId", self._access_id);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "projects/{projectId}/hmacKeys/{accessId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{projectId}", "projectId"), ("{accessId}", "accessId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["accessId", "projectId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["accessId", "projectId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -19615,14 +20055,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -19631,23 +20071,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -19663,7 +20109,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -19733,7 +20179,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectHmacKeyUpdateCall<'a, S> {
@@ -19766,25 +20213,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectHmacKeyUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectHmacKeyUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectHmacKeyUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectHmacKeyUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -19793,7 +20251,7 @@ where
 /// Get the email address of this project's Google Cloud Storage service account.
 ///
 /// A builder for the *serviceAccount.get* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -19805,7 +20263,7 @@ where
 /// # extern crate google_storage1 as storage1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use storage1::{Storage, oauth2, hyper, hyper_rustls};
+/// # use storage1::{Storage, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -19817,8 +20275,8 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().service_account_get("projectId")
-///              .user_project("diam")
-///              .provisional_user_project("ipsum")
+///              .user_project("sit")
+///              .provisional_user_project("Lorem")
 ///              .doit().await;
 /// # }
 /// ```
@@ -19831,14 +20289,14 @@ pub struct ProjectServiceAccountGetCall<'a, S>
     _provisional_user_project: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectServiceAccountGetCall<'a, S> {}
 
 impl<'a, S> ProjectServiceAccountGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -19849,74 +20307,59 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ServiceAccount)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "storage.projects.serviceAccount.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("projectId", self._project_id.to_string()));
-        if let Some(value) = self._user_project {
-            params.push(("userProject", value.to_string()));
-        }
-        if let Some(value) = self._provisional_user_project {
-            params.push(("provisionalUserProject", value.to_string()));
-        }
+
         for &field in ["alt", "projectId", "userProject", "provisionalUserProject"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("projectId", self._project_id);
+        if let Some(value) = self._user_project.as_ref() {
+            params.push("userProject", value);
+        }
+        if let Some(value) = self._provisional_user_project.as_ref() {
+            params.push("provisionalUserProject", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "projects/{projectId}/serviceAccount";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{projectId}", "projectId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["projectId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["projectId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -19924,21 +20367,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -19954,7 +20403,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -20012,7 +20461,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectServiceAccountGetCall<'a, S> {
@@ -20045,25 +20495,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectServiceAccountGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectServiceAccountGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectServiceAccountGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectServiceAccountGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }

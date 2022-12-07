@@ -3,8 +3,6 @@
 // DO NOT EDIT !
 #![allow(unused_variables, unused_imports, dead_code, unused_mut)]
 
-extern crate tokio;
-
 #[macro_use]
 extern crate clap;
 
@@ -12,9 +10,10 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_storage1::{api, Error, oauth2};
+use google_storage1::{api, Error, oauth2, client::chrono, FieldMask};
 
-mod client;
+
+use google_clis_common as client;
 
 use client::{InvalidOptionsError, CLIError, arg_from_str, writer_from_opts, parse_kv_arg,
           input_file_from_opts, input_mime_from_opts, FieldCursor, FieldError, CallType, UploadProtocol,
@@ -542,10 +541,10 @@ where
                     call = call.provisional_user_project(value.unwrap_or(""));
                 },
                 "if-metageneration-not-match" => {
-                    call = call.if_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-match" => {
-                    call = call.if_metageneration_match(value.unwrap_or(""));
+                    call = call.if_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -602,10 +601,10 @@ where
                     call = call.projection(value.unwrap_or(""));
                 },
                 "if-metageneration-not-match" => {
-                    call = call.if_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-match" => {
-                    call = call.if_metageneration_match(value.unwrap_or(""));
+                    call = call.if_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -667,7 +666,7 @@ where
                     call = call.provisional_user_project(value.unwrap_or(""));
                 },
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -874,7 +873,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 _ => {
                     let mut found = false;
@@ -1072,10 +1071,10 @@ where
                     call = call.predefined_acl(value.unwrap_or(""));
                 },
                 "if-metageneration-not-match" => {
-                    call = call.if_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-match" => {
-                    call = call.if_metageneration_match(value.unwrap_or(""));
+                    call = call.if_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -1368,10 +1367,10 @@ where
                     call = call.predefined_acl(value.unwrap_or(""));
                 },
                 "if-metageneration-not-match" => {
-                    call = call.if_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-match" => {
-                    call = call.if_metageneration_match(value.unwrap_or(""));
+                    call = call.if_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -1734,10 +1733,10 @@ where
                     call = call.provisional_user_project(value.unwrap_or(""));
                 },
                 "if-metageneration-not-match" => {
-                    call = call.if_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-match" => {
-                    call = call.if_metageneration_match(value.unwrap_or(""));
+                    call = call.if_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -2278,7 +2277,7 @@ where
                     call = call.provisional_user_project(value.unwrap_or(""));
                 },
                 "generation" => {
-                    call = call.generation(value.unwrap_or(""));
+                    call = call.generation(        value.map(|v| arg_from_str(v, err, "generation", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -2332,7 +2331,7 @@ where
                     call = call.provisional_user_project(value.unwrap_or(""));
                 },
                 "generation" => {
-                    call = call.generation(value.unwrap_or(""));
+                    call = call.generation(        value.map(|v| arg_from_str(v, err, "generation", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -2440,7 +2439,7 @@ where
                     call = call.provisional_user_project(value.unwrap_or(""));
                 },
                 "generation" => {
-                    call = call.generation(value.unwrap_or(""));
+                    call = call.generation(        value.map(|v| arg_from_str(v, err, "generation", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -2502,7 +2501,7 @@ where
                     call = call.provisional_user_project(value.unwrap_or(""));
                 },
                 "generation" => {
-                    call = call.generation(value.unwrap_or(""));
+                    call = call.generation(        value.map(|v| arg_from_str(v, err, "generation", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -2610,7 +2609,7 @@ where
                     call = call.provisional_user_project(value.unwrap_or(""));
                 },
                 "generation" => {
-                    call = call.generation(value.unwrap_or(""));
+                    call = call.generation(        value.map(|v| arg_from_str(v, err, "generation", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -2718,7 +2717,7 @@ where
                     call = call.provisional_user_project(value.unwrap_or(""));
                 },
                 "generation" => {
-                    call = call.generation(value.unwrap_or(""));
+                    call = call.generation(        value.map(|v| arg_from_str(v, err, "generation", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -2849,10 +2848,10 @@ where
                     call = call.kms_key_name(value.unwrap_or(""));
                 },
                 "if-metageneration-match" => {
-                    call = call.if_metageneration_match(value.unwrap_or(""));
+                    call = call.if_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-match" => {
-                    call = call.if_generation_match(value.unwrap_or(""));
+                    call = call.if_generation_match(        value.map(|v| arg_from_str(v, err, "if-generation-match", "int64")).unwrap_or(-0));
                 },
                 "destination-predefined-acl" => {
                     call = call.destination_predefined_acl(value.unwrap_or(""));
@@ -2979,7 +2978,7 @@ where
                     call = call.user_project(value.unwrap_or(""));
                 },
                 "source-generation" => {
-                    call = call.source_generation(value.unwrap_or(""));
+                    call = call.source_generation(        value.map(|v| arg_from_str(v, err, "source-generation", "int64")).unwrap_or(-0));
                 },
                 "provisional-user-project" => {
                     call = call.provisional_user_project(value.unwrap_or(""));
@@ -2988,28 +2987,28 @@ where
                     call = call.projection(value.unwrap_or(""));
                 },
                 "if-source-metageneration-not-match" => {
-                    call = call.if_source_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_source_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-source-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-source-metageneration-match" => {
-                    call = call.if_source_metageneration_match(value.unwrap_or(""));
+                    call = call.if_source_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-source-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 "if-source-generation-not-match" => {
-                    call = call.if_source_generation_not_match(value.unwrap_or(""));
+                    call = call.if_source_generation_not_match(        value.map(|v| arg_from_str(v, err, "if-source-generation-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-source-generation-match" => {
-                    call = call.if_source_generation_match(value.unwrap_or(""));
+                    call = call.if_source_generation_match(        value.map(|v| arg_from_str(v, err, "if-source-generation-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-not-match" => {
-                    call = call.if_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-match" => {
-                    call = call.if_metageneration_match(value.unwrap_or(""));
+                    call = call.if_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-not-match" => {
-                    call = call.if_generation_not_match(value.unwrap_or(""));
+                    call = call.if_generation_not_match(        value.map(|v| arg_from_str(v, err, "if-generation-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-match" => {
-                    call = call.if_generation_match(value.unwrap_or(""));
+                    call = call.if_generation_match(        value.map(|v| arg_from_str(v, err, "if-generation-match", "int64")).unwrap_or(-0));
                 },
                 "destination-predefined-acl" => {
                     call = call.destination_predefined_acl(value.unwrap_or(""));
@@ -3077,19 +3076,19 @@ where
                     call = call.provisional_user_project(value.unwrap_or(""));
                 },
                 "if-metageneration-not-match" => {
-                    call = call.if_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-match" => {
-                    call = call.if_metageneration_match(value.unwrap_or(""));
+                    call = call.if_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-not-match" => {
-                    call = call.if_generation_not_match(value.unwrap_or(""));
+                    call = call.if_generation_not_match(        value.map(|v| arg_from_str(v, err, "if-generation-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-match" => {
-                    call = call.if_generation_match(value.unwrap_or(""));
+                    call = call.if_generation_match(        value.map(|v| arg_from_str(v, err, "if-generation-match", "int64")).unwrap_or(-0));
                 },
                 "generation" => {
-                    call = call.generation(value.unwrap_or(""));
+                    call = call.generation(        value.map(|v| arg_from_str(v, err, "generation", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -3147,19 +3146,19 @@ where
                     call = call.projection(value.unwrap_or(""));
                 },
                 "if-metageneration-not-match" => {
-                    call = call.if_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-match" => {
-                    call = call.if_metageneration_match(value.unwrap_or(""));
+                    call = call.if_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-not-match" => {
-                    call = call.if_generation_not_match(value.unwrap_or(""));
+                    call = call.if_generation_not_match(        value.map(|v| arg_from_str(v, err, "if-generation-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-match" => {
-                    call = call.if_generation_match(value.unwrap_or(""));
+                    call = call.if_generation_match(        value.map(|v| arg_from_str(v, err, "if-generation-match", "int64")).unwrap_or(-0));
                 },
                 "generation" => {
-                    call = call.generation(value.unwrap_or(""));
+                    call = call.generation(        value.map(|v| arg_from_str(v, err, "generation", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -3230,7 +3229,7 @@ where
                     call = call.provisional_user_project(value.unwrap_or(""));
                 },
                 "generation" => {
-                    call = call.generation(value.unwrap_or(""));
+                    call = call.generation(        value.map(|v| arg_from_str(v, err, "generation", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -3369,16 +3368,16 @@ where
                     call = call.kms_key_name(value.unwrap_or(""));
                 },
                 "if-metageneration-not-match" => {
-                    call = call.if_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-match" => {
-                    call = call.if_metageneration_match(value.unwrap_or(""));
+                    call = call.if_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-not-match" => {
-                    call = call.if_generation_not_match(value.unwrap_or(""));
+                    call = call.if_generation_not_match(        value.map(|v| arg_from_str(v, err, "if-generation-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-match" => {
-                    call = call.if_generation_match(value.unwrap_or(""));
+                    call = call.if_generation_match(        value.map(|v| arg_from_str(v, err, "if-generation-match", "int64")).unwrap_or(-0));
                 },
                 "content-encoding" => {
                     call = call.content_encoding(value.unwrap_or(""));
@@ -3440,7 +3439,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "versions" => {
-                    call = call.versions(arg_from_str(value.unwrap_or("false"), err, "versions", "boolean"));
+                    call = call.versions(        value.map(|v| arg_from_str(v, err, "versions", "boolean")).unwrap_or(false));
                 },
                 "user-project" => {
                     call = call.user_project(value.unwrap_or(""));
@@ -3461,10 +3460,10 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-trailing-delimiter" => {
-                    call = call.include_trailing_delimiter(arg_from_str(value.unwrap_or("false"), err, "include-trailing-delimiter", "boolean"));
+                    call = call.include_trailing_delimiter(        value.map(|v| arg_from_str(v, err, "include-trailing-delimiter", "boolean")).unwrap_or(false));
                 },
                 "end-offset" => {
                     call = call.end_offset(value.unwrap_or(""));
@@ -3603,19 +3602,19 @@ where
                     call = call.predefined_acl(value.unwrap_or(""));
                 },
                 "if-metageneration-not-match" => {
-                    call = call.if_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-match" => {
-                    call = call.if_metageneration_match(value.unwrap_or(""));
+                    call = call.if_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-not-match" => {
-                    call = call.if_generation_not_match(value.unwrap_or(""));
+                    call = call.if_generation_not_match(        value.map(|v| arg_from_str(v, err, "if-generation-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-match" => {
-                    call = call.if_generation_match(value.unwrap_or(""));
+                    call = call.if_generation_match(        value.map(|v| arg_from_str(v, err, "if-generation-match", "int64")).unwrap_or(-0));
                 },
                 "generation" => {
-                    call = call.generation(value.unwrap_or(""));
+                    call = call.generation(        value.map(|v| arg_from_str(v, err, "generation", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -3739,7 +3738,7 @@ where
                     call = call.user_project(value.unwrap_or(""));
                 },
                 "source-generation" => {
-                    call = call.source_generation(value.unwrap_or(""));
+                    call = call.source_generation(        value.map(|v| arg_from_str(v, err, "source-generation", "int64")).unwrap_or(-0));
                 },
                 "rewrite-token" => {
                     call = call.rewrite_token(value.unwrap_or(""));
@@ -3751,31 +3750,31 @@ where
                     call = call.projection(value.unwrap_or(""));
                 },
                 "max-bytes-rewritten-per-call" => {
-                    call = call.max_bytes_rewritten_per_call(value.unwrap_or(""));
+                    call = call.max_bytes_rewritten_per_call(        value.map(|v| arg_from_str(v, err, "max-bytes-rewritten-per-call", "int64")).unwrap_or(-0));
                 },
                 "if-source-metageneration-not-match" => {
-                    call = call.if_source_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_source_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-source-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-source-metageneration-match" => {
-                    call = call.if_source_metageneration_match(value.unwrap_or(""));
+                    call = call.if_source_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-source-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 "if-source-generation-not-match" => {
-                    call = call.if_source_generation_not_match(value.unwrap_or(""));
+                    call = call.if_source_generation_not_match(        value.map(|v| arg_from_str(v, err, "if-source-generation-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-source-generation-match" => {
-                    call = call.if_source_generation_match(value.unwrap_or(""));
+                    call = call.if_source_generation_match(        value.map(|v| arg_from_str(v, err, "if-source-generation-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-not-match" => {
-                    call = call.if_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-match" => {
-                    call = call.if_metageneration_match(value.unwrap_or(""));
+                    call = call.if_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-not-match" => {
-                    call = call.if_generation_not_match(value.unwrap_or(""));
+                    call = call.if_generation_not_match(        value.map(|v| arg_from_str(v, err, "if-generation-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-match" => {
-                    call = call.if_generation_match(value.unwrap_or(""));
+                    call = call.if_generation_match(        value.map(|v| arg_from_str(v, err, "if-generation-match", "int64")).unwrap_or(-0));
                 },
                 "destination-predefined-acl" => {
                     call = call.destination_predefined_acl(value.unwrap_or(""));
@@ -3879,7 +3878,7 @@ where
                     call = call.provisional_user_project(value.unwrap_or(""));
                 },
                 "generation" => {
-                    call = call.generation(value.unwrap_or(""));
+                    call = call.generation(        value.map(|v| arg_from_str(v, err, "generation", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -3941,7 +3940,7 @@ where
                     call = call.provisional_user_project(value.unwrap_or(""));
                 },
                 "generation" => {
-                    call = call.generation(value.unwrap_or(""));
+                    call = call.generation(        value.map(|v| arg_from_str(v, err, "generation", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -4074,19 +4073,19 @@ where
                     call = call.predefined_acl(value.unwrap_or(""));
                 },
                 "if-metageneration-not-match" => {
-                    call = call.if_metageneration_not_match(value.unwrap_or(""));
+                    call = call.if_metageneration_not_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-metageneration-match" => {
-                    call = call.if_metageneration_match(value.unwrap_or(""));
+                    call = call.if_metageneration_match(        value.map(|v| arg_from_str(v, err, "if-metageneration-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-not-match" => {
-                    call = call.if_generation_not_match(value.unwrap_or(""));
+                    call = call.if_generation_not_match(        value.map(|v| arg_from_str(v, err, "if-generation-not-match", "int64")).unwrap_or(-0));
                 },
                 "if-generation-match" => {
-                    call = call.if_generation_match(value.unwrap_or(""));
+                    call = call.if_generation_match(        value.map(|v| arg_from_str(v, err, "if-generation-match", "int64")).unwrap_or(-0));
                 },
                 "generation" => {
-                    call = call.generation(value.unwrap_or(""));
+                    call = call.generation(        value.map(|v| arg_from_str(v, err, "generation", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -4184,7 +4183,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "versions" => {
-                    call = call.versions(arg_from_str(value.unwrap_or("false"), err, "versions", "boolean"));
+                    call = call.versions(        value.map(|v| arg_from_str(v, err, "versions", "boolean")).unwrap_or(false));
                 },
                 "user-project" => {
                     call = call.user_project(value.unwrap_or(""));
@@ -4205,10 +4204,10 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-trailing-delimiter" => {
-                    call = call.include_trailing_delimiter(arg_from_str(value.unwrap_or("false"), err, "include-trailing-delimiter", "boolean"));
+                    call = call.include_trailing_delimiter(        value.map(|v| arg_from_str(v, err, "include-trailing-delimiter", "boolean")).unwrap_or(false));
                 },
                 "end-offset" => {
                     call = call.end_offset(value.unwrap_or(""));
@@ -4433,7 +4432,7 @@ where
                     call = call.user_project(value.unwrap_or(""));
                 },
                 "show-deleted-keys" => {
-                    call = call.show_deleted_keys(arg_from_str(value.unwrap_or("false"), err, "show-deleted-keys", "boolean"));
+                    call = call.show_deleted_keys(        value.map(|v| arg_from_str(v, err, "show-deleted-keys", "boolean")).unwrap_or(false));
                 },
                 "service-account-email" => {
                     call = call.service_account_email(value.unwrap_or(""));
@@ -4442,7 +4441,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 _ => {
                     let mut found = false;
@@ -6459,7 +6458,7 @@ async fn main() {
     
     let mut app = App::new("storage1")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.1+20220228")
+           .version("5.0.2-beta-1+20220228")
            .about("Stores and retrieves potentially large, immutable data objects.")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_storage1_cli")
            .arg(Arg::with_name("url")
