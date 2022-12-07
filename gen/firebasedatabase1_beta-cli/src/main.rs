@@ -3,8 +3,6 @@
 // DO NOT EDIT !
 #![allow(unused_variables, unused_imports, dead_code, unused_mut)]
 
-extern crate tokio;
-
 #[macro_use]
 extern crate clap;
 
@@ -12,9 +10,10 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_firebasedatabase1_beta::{api, Error, oauth2};
+use google_firebasedatabase1_beta::{api, Error, oauth2, client::chrono, FieldMask};
 
-mod client;
+
+use google_clis_common as client;
 
 use client::{InvalidOptionsError, CLIError, arg_from_str, writer_from_opts, parse_kv_arg,
           input_file_from_opts, input_mime_from_opts, FieldCursor, FieldError, CallType, UploadProtocol,
@@ -95,7 +94,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "validate-only" => {
-                    call = call.validate_only(arg_from_str(value.unwrap_or("false"), err, "validate-only", "boolean"));
+                    call = call.validate_only(        value.map(|v| arg_from_str(v, err, "validate-only", "boolean")).unwrap_or(false));
                 },
                 "database-id" => {
                     call = call.database_id(value.unwrap_or(""));
@@ -345,7 +344,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -739,7 +738,7 @@ async fn main() {
     
     let mut app = App::new("firebasedatabase1-beta")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.1+20220304")
+           .version("5.0.2-beta-1+20220304")
            .about("The Firebase Realtime Database Management API enables programmatic provisioning and management of Realtime Database instances.")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_firebasedatabase1_beta_cli")
            .arg(Arg::with_name("url")
