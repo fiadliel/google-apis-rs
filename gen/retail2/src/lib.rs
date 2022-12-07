@@ -2,7 +2,7 @@
 // This file was generated automatically from 'src/generator/templates/api/lib.rs.mako'
 // DO NOT EDIT !
 
-//! This documentation was generated from *Cloud Retail* crate version *4.0.1+20220224*, where *20220224* is the exact revision of the *retail:v2* schema built by the [mako](http://www.makotemplates.org/) code generator *v4.0.1*.
+//! This documentation was generated from *Cloud Retail* crate version *5.0.2-beta-1+20220224*, where *20220224* is the exact revision of the *retail:v2* schema built by the [mako](http://www.makotemplates.org/) code generator *v5.0.2-beta-1*.
 //! 
 //! Everything else about the *Cloud Retail* *v2* API can be found at the
 //! [official documentation site](https://cloud.google.com/recommendations).
@@ -12,7 +12,7 @@
 //! Handle the following *Resources* with ease from the central [hub](CloudRetail) ... 
 //! 
 //! * projects
-//!  * [*locations catalogs branches operations get*](api::ProjectLocationCatalogBrancheOperationGetCall), [*locations catalogs branches products add fulfillment places*](api::ProjectLocationCatalogBrancheProductAddFulfillmentPlaceCall), [*locations catalogs branches products create*](api::ProjectLocationCatalogBrancheProductCreateCall), [*locations catalogs branches products delete*](api::ProjectLocationCatalogBrancheProductDeleteCall), [*locations catalogs branches products get*](api::ProjectLocationCatalogBrancheProductGetCall), [*locations catalogs branches products import*](api::ProjectLocationCatalogBrancheProductImportCall), [*locations catalogs branches products list*](api::ProjectLocationCatalogBrancheProductListCall), [*locations catalogs branches products patch*](api::ProjectLocationCatalogBrancheProductPatchCall), [*locations catalogs branches products remove fulfillment places*](api::ProjectLocationCatalogBrancheProductRemoveFulfillmentPlaceCall), [*locations catalogs branches products set inventory*](api::ProjectLocationCatalogBrancheProductSetInventoryCall), [*locations catalogs complete query*](api::ProjectLocationCatalogCompleteQueryCall), [*locations catalogs completion data import*](api::ProjectLocationCatalogCompletionDataImportCall), [*locations catalogs get default branch*](api::ProjectLocationCatalogGetDefaultBranchCall), [*locations catalogs list*](api::ProjectLocationCatalogListCall), [*locations catalogs operations get*](api::ProjectLocationCatalogOperationGetCall), [*locations catalogs operations list*](api::ProjectLocationCatalogOperationListCall), [*locations catalogs patch*](api::ProjectLocationCatalogPatchCall), [*locations catalogs placements predict*](api::ProjectLocationCatalogPlacementPredictCall), [*locations catalogs placements search*](api::ProjectLocationCatalogPlacementSearchCall), [*locations catalogs set default branch*](api::ProjectLocationCatalogSetDefaultBranchCall), [*locations catalogs user events collect*](api::ProjectLocationCatalogUserEventCollectCall), [*locations catalogs user events import*](api::ProjectLocationCatalogUserEventImportCall), [*locations catalogs user events purge*](api::ProjectLocationCatalogUserEventPurgeCall), [*locations catalogs user events rejoin*](api::ProjectLocationCatalogUserEventRejoinCall), [*locations catalogs user events write*](api::ProjectLocationCatalogUserEventWriteCall), [*locations operations get*](api::ProjectLocationOperationGetCall), [*locations operations list*](api::ProjectLocationOperationListCall), [*operations get*](api::ProjectOperationGetCall) and [*operations list*](api::ProjectOperationListCall)
+//!  * [*locations catalogs branches operations get*](api::ProjectLocationCatalogBranchOperationGetCall), [*locations catalogs branches products add fulfillment places*](api::ProjectLocationCatalogBranchProductAddFulfillmentPlaceCall), [*locations catalogs branches products create*](api::ProjectLocationCatalogBranchProductCreateCall), [*locations catalogs branches products delete*](api::ProjectLocationCatalogBranchProductDeleteCall), [*locations catalogs branches products get*](api::ProjectLocationCatalogBranchProductGetCall), [*locations catalogs branches products import*](api::ProjectLocationCatalogBranchProductImportCall), [*locations catalogs branches products list*](api::ProjectLocationCatalogBranchProductListCall), [*locations catalogs branches products patch*](api::ProjectLocationCatalogBranchProductPatchCall), [*locations catalogs branches products remove fulfillment places*](api::ProjectLocationCatalogBranchProductRemoveFulfillmentPlaceCall), [*locations catalogs branches products set inventory*](api::ProjectLocationCatalogBranchProductSetInventoryCall), [*locations catalogs complete query*](api::ProjectLocationCatalogCompleteQueryCall), [*locations catalogs completion data import*](api::ProjectLocationCatalogCompletionDataImportCall), [*locations catalogs get default branch*](api::ProjectLocationCatalogGetDefaultBranchCall), [*locations catalogs list*](api::ProjectLocationCatalogListCall), [*locations catalogs operations get*](api::ProjectLocationCatalogOperationGetCall), [*locations catalogs operations list*](api::ProjectLocationCatalogOperationListCall), [*locations catalogs patch*](api::ProjectLocationCatalogPatchCall), [*locations catalogs placements predict*](api::ProjectLocationCatalogPlacementPredictCall), [*locations catalogs placements search*](api::ProjectLocationCatalogPlacementSearchCall), [*locations catalogs set default branch*](api::ProjectLocationCatalogSetDefaultBranchCall), [*locations catalogs user events collect*](api::ProjectLocationCatalogUserEventCollectCall), [*locations catalogs user events import*](api::ProjectLocationCatalogUserEventImportCall), [*locations catalogs user events purge*](api::ProjectLocationCatalogUserEventPurgeCall), [*locations catalogs user events rejoin*](api::ProjectLocationCatalogUserEventRejoinCall), [*locations catalogs user events write*](api::ProjectLocationCatalogUserEventWriteCall), [*locations operations get*](api::ProjectLocationOperationGetCall), [*locations operations list*](api::ProjectLocationOperationListCall), [*operations get*](api::ProjectOperationGetCall) and [*operations list*](api::ProjectOperationListCall)
 //! 
 //! 
 //! 
@@ -89,7 +89,7 @@
 //! use retail2::{Result, Error};
 //! # async fn dox() {
 //! use std::default::Default;
-//! use retail2::{CloudRetail, oauth2, hyper, hyper_rustls};
+//! use retail2::{CloudRetail, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 //! 
 //! // Get an ApplicationSecret instance by some means. It contains the `client_id` and 
 //! // `client_secret`, among other things.
@@ -198,22 +198,17 @@
 // This file was generated automatically from 'src/generator/templates/api/lib.rs.mako'
 // DO NOT EDIT !
 
-#[macro_use]
-extern crate serde_derive;
-
 // Re-export the hyper and hyper_rustls crate, they are required to build the hub
-pub extern crate hyper;
-pub extern crate hyper_rustls;
-extern crate serde;
-extern crate serde_json;
-// Re-export the yup_oauth2 crate, that is required to call some methods of the hub and the client
-pub extern crate yup_oauth2 as oauth2;
-extern crate mime;
-extern crate url;
-
+pub use hyper;
+pub use hyper_rustls;
+pub extern crate google_apis_common as client;
+pub use client::chrono;
 pub mod api;
-pub mod client;
 
 // Re-export the hub type and some basic client structs
 pub use api::CloudRetail;
-pub use client::{Result, Error, Delegate};
+pub use client::{Result, Error, Delegate, FieldMask};
+
+// Re-export the yup_oauth2 crate, that is required to call some methods of the hub and the client
+#[cfg(feature = "yup-oauth2")]
+pub use client::oauth2;
