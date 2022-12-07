@@ -3,8 +3,6 @@
 // DO NOT EDIT !
 #![allow(unused_variables, unused_imports, dead_code, unused_mut)]
 
-extern crate tokio;
-
 #[macro_use]
 extern crate clap;
 
@@ -12,9 +10,10 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_compute1::{api, Error, oauth2};
+use google_compute1::{api, Error, oauth2, client::chrono, FieldMask};
 
-mod client;
+
+use google_clis_common as client;
 
 use client::{InvalidOptionsError, CLIError, arg_from_str, writer_from_opts, parse_kv_arg,
           input_file_from_opts, input_mime_from_opts, FieldCursor, FieldError, CallType, UploadProtocol,
@@ -58,7 +57,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -67,10 +66,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -181,7 +180,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -190,7 +189,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -249,7 +248,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -258,10 +257,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -533,7 +532,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -542,7 +541,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -601,7 +600,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -610,10 +609,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -890,7 +889,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -899,7 +898,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -1547,7 +1546,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -1556,7 +1555,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -2012,7 +2011,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -2021,10 +2020,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -2502,7 +2501,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -2511,7 +2510,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -3088,7 +3087,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -3097,10 +3096,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -3211,7 +3210,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -3220,7 +3219,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -3368,7 +3367,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -3377,10 +3376,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -3506,7 +3505,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "guest-flush" => {
-                    call = call.guest_flush(arg_from_str(value.unwrap_or("false"), err, "guest-flush", "boolean"));
+                    call = call.guest_flush(        value.map(|v| arg_from_str(v, err, "guest-flush", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -3670,7 +3669,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -3864,7 +3863,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -3873,7 +3872,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -4577,7 +4576,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -4586,7 +4585,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -4856,7 +4855,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "replace-existing-association" => {
-                    call = call.replace_existing_association(arg_from_str(value.unwrap_or("false"), err, "replace-existing-association", "boolean"));
+                    call = call.replace_existing_association(        value.map(|v| arg_from_str(v, err, "replace-existing-association", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -5235,7 +5234,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -5291,7 +5290,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "priority" => {
-                    call = call.priority(arg_from_str(value.unwrap_or("-0"), err, "priority", "integer"));
+                    call = call.priority(        value.map(|v| arg_from_str(v, err, "priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -5451,7 +5450,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "parent-id" => {
                     call = call.parent_id(value.unwrap_or(""));
@@ -5463,7 +5462,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -5785,7 +5784,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "priority" => {
-                    call = call.priority(arg_from_str(value.unwrap_or("-0"), err, "priority", "integer"));
+                    call = call.priority(        value.map(|v| arg_from_str(v, err, "priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -5903,7 +5902,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "priority" => {
-                    call = call.priority(arg_from_str(value.unwrap_or("-0"), err, "priority", "integer"));
+                    call = call.priority(        value.map(|v| arg_from_str(v, err, "priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -6345,7 +6344,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -6354,7 +6353,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -6625,7 +6624,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -6634,10 +6633,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -6920,7 +6919,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -6929,7 +6928,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -7496,7 +7495,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -7505,7 +7504,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -7788,7 +7787,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -7797,7 +7796,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -8542,7 +8541,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -8551,7 +8550,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -8610,7 +8609,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -8619,7 +8618,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -8678,7 +8677,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -8687,10 +8686,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -8845,7 +8844,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -8854,7 +8853,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -9069,7 +9068,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "parent-id" => {
                     call = call.parent_id(value.unwrap_or(""));
@@ -9081,7 +9080,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -9348,7 +9347,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -9357,7 +9356,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -9516,7 +9515,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -9525,10 +9524,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -9833,7 +9832,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -9842,7 +9841,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -10386,7 +10385,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -10395,7 +10394,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -10865,7 +10864,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -10874,7 +10873,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -11440,7 +11439,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -11584,7 +11583,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "force-create" => {
-                    call = call.force_create(arg_from_str(value.unwrap_or("false"), err, "force-create", "boolean"));
+                    call = call.force_create(        value.map(|v| arg_from_str(v, err, "force-create", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -11640,7 +11639,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -11649,7 +11648,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -12196,7 +12195,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -12205,10 +12204,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -12858,7 +12857,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -12867,7 +12866,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -12926,7 +12925,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -12935,7 +12934,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -12994,7 +12993,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -13003,7 +13002,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -13062,7 +13061,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -13071,7 +13070,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -13851,7 +13850,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -13860,10 +13859,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -14130,7 +14129,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -14139,7 +14138,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -14231,7 +14230,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -14240,7 +14239,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -14584,7 +14583,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -14765,7 +14764,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -14774,7 +14773,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -15191,7 +15190,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -15200,10 +15199,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -15336,7 +15335,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "force-attach" => {
-                    call = call.force_attach(arg_from_str(value.unwrap_or("false"), err, "force-attach", "boolean"));
+                    call = call.force_attach(        value.map(|v| arg_from_str(v, err, "force-attach", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -15845,7 +15844,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -15953,10 +15952,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "start" => {
-                    call = call.start(value.unwrap_or(""));
+                    call = call.start(        value.map(|v| arg_from_str(v, err, "start", "int64")).unwrap_or(-0));
                 },
                 "port" => {
-                    call = call.port(arg_from_str(value.unwrap_or("-0"), err, "port", "integer"));
+                    call = call.port(        value.map(|v| arg_from_str(v, err, "port", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -16214,7 +16213,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -16223,7 +16222,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -16282,7 +16281,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -16291,7 +16290,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -16598,7 +16597,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "deletion-protection" => {
-                    call = call.deletion_protection(arg_from_str(value.unwrap_or("false"), err, "deletion-protection", "boolean"));
+                    call = call.deletion_protection(        value.map(|v| arg_from_str(v, err, "deletion-protection", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -18528,7 +18527,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -18537,10 +18536,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -18776,7 +18775,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "validate-only" => {
-                    call = call.validate_only(arg_from_str(value.unwrap_or("false"), err, "validate-only", "boolean"));
+                    call = call.validate_only(        value.map(|v| arg_from_str(v, err, "validate-only", "boolean")).unwrap_or(false));
                 },
                 "request-id" => {
                     call = call.request_id(value.unwrap_or(""));
@@ -18835,7 +18834,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -18844,7 +18843,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -19080,7 +19079,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -19089,7 +19088,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -19417,7 +19416,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -19426,7 +19425,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -19839,7 +19838,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -19994,7 +19993,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -20003,7 +20002,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -20342,7 +20341,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -20553,7 +20552,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -20562,7 +20561,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -20793,7 +20792,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -20802,10 +20801,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -20916,7 +20915,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -20925,7 +20924,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -20984,7 +20983,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -20993,10 +20992,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -21450,7 +21449,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -21459,7 +21458,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -21551,7 +21550,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -21560,7 +21559,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -21744,7 +21743,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "replace-existing-association" => {
-                    call = call.replace_existing_association(arg_from_str(value.unwrap_or("false"), err, "replace-existing-association", "boolean"));
+                    call = call.replace_existing_association(        value.map(|v| arg_from_str(v, err, "replace-existing-association", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -21847,10 +21846,10 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "min-priority" => {
-                    call = call.min_priority(arg_from_str(value.unwrap_or("-0"), err, "min-priority", "integer"));
+                    call = call.min_priority(        value.map(|v| arg_from_str(v, err, "min-priority", "int32")).unwrap_or(-0));
                 },
                 "max-priority" => {
-                    call = call.max_priority(arg_from_str(value.unwrap_or("-0"), err, "max-priority", "integer"));
+                    call = call.max_priority(        value.map(|v| arg_from_str(v, err, "max-priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -22129,7 +22128,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -22185,7 +22184,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "priority" => {
-                    call = call.priority(arg_from_str(value.unwrap_or("-0"), err, "priority", "integer"));
+                    call = call.priority(        value.map(|v| arg_from_str(v, err, "priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -22342,7 +22341,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -22351,7 +22350,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -22558,7 +22557,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "priority" => {
-                    call = call.priority(arg_from_str(value.unwrap_or("-0"), err, "priority", "integer"));
+                    call = call.priority(        value.map(|v| arg_from_str(v, err, "priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -22676,7 +22675,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "priority" => {
-                    call = call.priority(arg_from_str(value.unwrap_or("-0"), err, "priority", "integer"));
+                    call = call.priority(        value.map(|v| arg_from_str(v, err, "priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -23270,7 +23269,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -23279,7 +23278,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -23338,7 +23337,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "region" => {
                     call = call.region(value.unwrap_or(""));
@@ -23353,7 +23352,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -23852,7 +23851,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -23861,10 +23860,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -24120,7 +24119,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -24284,7 +24283,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -24293,7 +24292,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -24352,7 +24351,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -24361,7 +24360,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -24788,7 +24787,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -24797,10 +24796,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -24967,7 +24966,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -25127,7 +25126,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -25136,7 +25135,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -25367,7 +25366,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -25376,10 +25375,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -25490,7 +25489,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -25499,7 +25498,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -25558,7 +25557,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -25567,10 +25566,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -25842,7 +25841,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -25851,7 +25850,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -26496,7 +26495,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -26505,7 +26504,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -26597,7 +26596,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -26606,7 +26605,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -27321,7 +27320,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -27330,7 +27329,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -27488,7 +27487,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -27497,10 +27496,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -27767,7 +27766,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -27776,7 +27775,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -28153,7 +28152,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -28162,7 +28161,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -28810,7 +28809,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -28819,7 +28818,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -29218,7 +29217,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -29227,10 +29226,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -29447,7 +29446,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -29456,7 +29455,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -29565,7 +29564,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "request-id" => {
                     call = call.request_id(value.unwrap_or(""));
@@ -29679,7 +29678,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -29688,7 +29687,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -30064,7 +30063,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -30258,7 +30257,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -30267,7 +30266,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -30974,7 +30973,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -30983,7 +30982,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -31388,7 +31387,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -31397,7 +31396,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -32412,7 +32411,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -32421,7 +32420,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -32480,7 +32479,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -32489,7 +32488,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -32548,7 +32547,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -32557,7 +32556,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -32616,7 +32615,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -32625,7 +32624,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -33369,7 +33368,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -33378,7 +33377,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -33471,7 +33470,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -33480,7 +33479,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -33969,7 +33968,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -33978,7 +33977,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -34077,7 +34076,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "replace-existing-association" => {
-                    call = call.replace_existing_association(arg_from_str(value.unwrap_or("false"), err, "replace-existing-association", "boolean"));
+                    call = call.replace_existing_association(        value.map(|v| arg_from_str(v, err, "replace-existing-association", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -34180,10 +34179,10 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "min-priority" => {
-                    call = call.min_priority(arg_from_str(value.unwrap_or("-0"), err, "min-priority", "integer"));
+                    call = call.min_priority(        value.map(|v| arg_from_str(v, err, "min-priority", "int32")).unwrap_or(-0));
                 },
                 "max-priority" => {
-                    call = call.max_priority(arg_from_str(value.unwrap_or("-0"), err, "max-priority", "integer"));
+                    call = call.max_priority(        value.map(|v| arg_from_str(v, err, "max-priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -34514,7 +34513,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -34570,7 +34569,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "priority" => {
-                    call = call.priority(arg_from_str(value.unwrap_or("-0"), err, "priority", "integer"));
+                    call = call.priority(        value.map(|v| arg_from_str(v, err, "priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -34727,7 +34726,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -34736,7 +34735,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -34943,7 +34942,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "priority" => {
-                    call = call.priority(arg_from_str(value.unwrap_or("-0"), err, "priority", "integer"));
+                    call = call.priority(        value.map(|v| arg_from_str(v, err, "priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -35061,7 +35060,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "priority" => {
-                    call = call.priority(arg_from_str(value.unwrap_or("-0"), err, "priority", "integer"));
+                    call = call.priority(        value.map(|v| arg_from_str(v, err, "priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -35498,7 +35497,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -35507,7 +35506,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -35662,7 +35661,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -35671,7 +35670,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -35995,7 +35994,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -36004,7 +36003,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -36269,7 +36268,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -36278,7 +36277,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -36637,7 +36636,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -36646,7 +36645,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -37120,7 +37119,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -37129,7 +37128,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -37623,7 +37622,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -37632,7 +37631,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -37691,7 +37690,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -37700,10 +37699,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -37870,7 +37869,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -38031,7 +38030,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -38040,7 +38039,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -38409,7 +38408,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "request-id" => {
                     call = call.request_id(value.unwrap_or(""));
@@ -38471,7 +38470,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -38480,10 +38479,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -38650,7 +38649,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -38824,7 +38823,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -38833,7 +38832,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -39064,7 +39063,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -39073,10 +39072,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -39243,7 +39242,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -39252,7 +39251,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -39464,7 +39463,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -39473,7 +39472,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -40045,7 +40044,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -40054,7 +40053,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -40329,7 +40328,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "priority" => {
-                    call = call.priority(arg_from_str(value.unwrap_or("-0"), err, "priority", "integer"));
+                    call = call.priority(        value.map(|v| arg_from_str(v, err, "priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -40486,7 +40485,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -40495,7 +40494,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -40554,7 +40553,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -40563,7 +40562,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -40779,7 +40778,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "priority" => {
-                    call = call.priority(arg_from_str(value.unwrap_or("-0"), err, "priority", "integer"));
+                    call = call.priority(        value.map(|v| arg_from_str(v, err, "priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -40835,7 +40834,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "priority" => {
-                    call = call.priority(arg_from_str(value.unwrap_or("-0"), err, "priority", "integer"));
+                    call = call.priority(        value.map(|v| arg_from_str(v, err, "priority", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -40891,7 +40890,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -40900,10 +40899,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -41070,7 +41069,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -41231,7 +41230,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -41240,7 +41239,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -41684,7 +41683,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -41860,7 +41859,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -41869,7 +41868,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -42186,7 +42185,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -42195,10 +42194,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -42470,7 +42469,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -42479,7 +42478,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -42745,7 +42744,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -42754,7 +42753,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -42813,7 +42812,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -42822,7 +42821,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -42980,7 +42979,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -42989,10 +42988,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -43248,7 +43247,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -43420,7 +43419,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -43429,7 +43428,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -43488,7 +43487,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -43497,7 +43496,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -43619,7 +43618,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "drain-timeout-seconds" => {
-                    call = call.drain_timeout_seconds(arg_from_str(value.unwrap_or("-0"), err, "drain-timeout-seconds", "integer"));
+                    call = call.drain_timeout_seconds(        value.map(|v| arg_from_str(v, err, "drain-timeout-seconds", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -44142,7 +44141,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -44151,7 +44150,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -44308,7 +44307,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -44317,10 +44316,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -44585,7 +44584,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -44594,7 +44593,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -44840,7 +44839,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -44849,10 +44848,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -45122,7 +45121,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -45131,7 +45130,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -45649,7 +45648,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -45658,10 +45657,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -45926,7 +45925,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -45935,7 +45934,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -46170,7 +46169,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -46179,10 +46178,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -46534,7 +46533,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -46543,7 +46542,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -46814,7 +46813,7 @@ where
                     call = call.request_id(value.unwrap_or(""));
                 },
                 "failover-ratio" => {
-                    call = call.failover_ratio(arg_from_str(value.unwrap_or("0.0"), err, "failover-ratio", "number"));
+                    call = call.failover_ratio(        value.map(|v| arg_from_str(v, err, "failover-ratio", "float")).unwrap_or(0.0));
                 },
                 _ => {
                     let mut found = false;
@@ -47076,7 +47075,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -47085,7 +47084,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -47705,7 +47704,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -47714,7 +47713,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -47951,7 +47950,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -47960,10 +47959,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -48229,7 +48228,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -48238,7 +48237,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -48297,7 +48296,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -48306,10 +48305,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -48695,7 +48694,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -48704,7 +48703,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -49147,7 +49146,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -49156,10 +49155,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -49477,7 +49476,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -49486,7 +49485,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -49720,7 +49719,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -49729,10 +49728,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-all-scopes" => {
-                    call = call.include_all_scopes(arg_from_str(value.unwrap_or("false"), err, "include-all-scopes", "boolean"));
+                    call = call.include_all_scopes(        value.map(|v| arg_from_str(v, err, "include-all-scopes", "boolean")).unwrap_or(false));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -50009,7 +50008,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -50018,7 +50017,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -50173,7 +50172,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -50182,7 +50181,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -50345,7 +50344,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "return-partial-success" => {
-                    call = call.return_partial_success(arg_from_str(value.unwrap_or("false"), err, "return-partial-success", "boolean"));
+                    call = call.return_partial_success(        value.map(|v| arg_from_str(v, err, "return-partial-success", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -50354,7 +50353,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -73878,7 +73877,7 @@ async fn main() {
     
     let mut app = App::new("compute1")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.1+20220224")
+           .version("5.0.2-beta-1+20220224")
            .about("Creates and runs virtual machines on Google Cloud Platform. ")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_compute1_cli")
            .arg(Arg::with_name("url")

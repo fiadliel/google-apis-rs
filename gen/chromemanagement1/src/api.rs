@@ -1,19 +1,20 @@
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::default::Default;
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::error::Error as StdError;
 use serde_json as json;
 use std::io;
 use std::fs;
 use std::mem;
-use std::thread::sleep;
 
-use http::Uri;
 use hyper::client::connect;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::time::sleep;
 use tower_service;
-use crate::client;
+use serde::{Serialize, Deserialize};
+
+use crate::{client, client::GetToken, client::serde_with};
 
 // ##############
 // UTILITIES ###
@@ -69,7 +70,7 @@ impl Default for Scope {
 /// use chromemanagement1::{Result, Error};
 /// # async fn dox() {
 /// use std::default::Default;
-/// use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls};
+/// use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// // Get an ApplicationSecret instance by some means. It contains the `client_id` and 
 /// // `client_secret`, among other things.
@@ -112,7 +113,7 @@ impl Default for Scope {
 #[derive(Clone)]
 pub struct ChromeManagement<S> {
     pub client: hyper::Client<S, hyper::body::Body>,
-    pub auth: oauth2::authenticator::Authenticator<S>,
+    pub auth: Box<dyn client::GetToken>,
     _user_agent: String,
     _base_url: String,
     _root_url: String,
@@ -122,11 +123,11 @@ impl<'a, S> client::Hub for ChromeManagement<S> {}
 
 impl<'a, S> ChromeManagement<S> {
 
-    pub fn new(client: hyper::Client<S, hyper::body::Body>, authenticator: oauth2::authenticator::Authenticator<S>) -> ChromeManagement<S> {
+    pub fn new<A: 'static + client::GetToken>(client: hyper::Client<S, hyper::body::Body>, auth: A) -> ChromeManagement<S> {
         ChromeManagement {
             client,
-            auth: authenticator,
-            _user_agent: "google-api-rust-client/4.0.1".to_string(),
+            auth: Box::new(auth),
+            _user_agent: "google-api-rust-client/5.0.2-beta-1".to_string(),
             _base_url: "https://chromemanagement.googleapis.com/".to_string(),
             _root_url: "https://chromemanagement.googleapis.com/".to_string(),
         }
@@ -137,7 +138,7 @@ impl<'a, S> ChromeManagement<S> {
     }
 
     /// Set the user-agent header field to use in all requests to the server.
-    /// It defaults to `google-api-rust-client/4.0.1`.
+    /// It defaults to `google-api-rust-client/5.0.2-beta-1`.
     ///
     /// Returns the previously set user-agent.
     pub fn user_agent(&mut self, agent_name: String) -> String {
@@ -169,9 +170,11 @@ impl<'a, S> ChromeManagement<S> {
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1AndroidAppInfo {
     /// Output only. Permissions requested by an Android app.
+    
     pub permissions: Option<Vec<GoogleChromeManagementV1AndroidAppPermission>>,
 }
 
@@ -182,10 +185,12 @@ impl client::Part for GoogleChromeManagementV1AndroidAppInfo {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1AndroidAppPermission {
     /// Output only. The type of the permission.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -203,61 +208,82 @@ impl client::Part for GoogleChromeManagementV1AndroidAppPermission {}
 /// * [apps chrome get customers](CustomerAppChromeGetCall) (response)
 /// * [apps web get customers](CustomerAppWebGetCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1AppDetails {
     /// Output only. Android app information.
     #[serde(rename="androidAppInfo")]
+    
     pub android_app_info: Option<GoogleChromeManagementV1AndroidAppInfo>,
     /// Output only. Unique store identifier for the item. Examples: "gmbmikajjgmnabiglmofipeabaddhgne" for the Save to Google Drive Chrome extension, "com.google.android.apps.docs" for the Google Drive Android app.
     #[serde(rename="appId")]
+    
     pub app_id: Option<String>,
     /// Output only. Chrome Web Store app information.
     #[serde(rename="chromeAppInfo")]
+    
     pub chrome_app_info: Option<GoogleChromeManagementV1ChromeAppInfo>,
     /// Output only. App's description.
+    
     pub description: Option<String>,
     /// Output only. The uri for the detail page of the item.
     #[serde(rename="detailUri")]
+    
     pub detail_uri: Option<String>,
     /// Output only. App's display name.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// Output only. First published time.
     #[serde(rename="firstPublishTime")]
-    pub first_publish_time: Option<String>,
+    
+    pub first_publish_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Output only. Home page or Website uri.
     #[serde(rename="homepageUri")]
+    
     pub homepage_uri: Option<String>,
     /// Output only. A link to an image that can be used as an icon for the product.
     #[serde(rename="iconUri")]
+    
     pub icon_uri: Option<String>,
     /// Output only. Indicates if the app has to be paid for OR has paid content.
     #[serde(rename="isPaidApp")]
+    
     pub is_paid_app: Option<bool>,
     /// Output only. Latest published time.
     #[serde(rename="latestPublishTime")]
-    pub latest_publish_time: Option<String>,
+    
+    pub latest_publish_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Output only. Format: name=customers/{customer_id}/apps/{chrome|android|web}/{app_id}@{version}
+    
     pub name: Option<String>,
     /// Output only. The URI pointing to the privacy policy of the app, if it was provided by the developer. Version-specific field that will only be set when the requested app version is found.
     #[serde(rename="privacyPolicyUri")]
+    
     pub privacy_policy_uri: Option<String>,
     /// Output only. The publisher of the item.
+    
     pub publisher: Option<String>,
     /// Output only. Number of reviews received. Chrome Web Store review information will always be for the latest version of an app.
     #[serde(rename="reviewNumber")]
-    pub review_number: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub review_number: Option<i64>,
     /// Output only. The rating of the app (on 5 stars). Chrome Web Store review information will always be for the latest version of an app.
     #[serde(rename="reviewRating")]
+    
     pub review_rating: Option<f32>,
     /// Output only. App version. A new revision is committed whenever a new version of the app is published.
     #[serde(rename="revisionId")]
+    
     pub revision_id: Option<String>,
     /// Output only. Information about a partial service error if applicable.
     #[serde(rename="serviceError")]
+    
     pub service_error: Option<GoogleRpcStatus>,
     /// Output only. App type.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -268,23 +294,31 @@ impl client::ResponseResult for GoogleChromeManagementV1AppDetails {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1BatteryInfo {
     /// Output only. Design capacity (mAmpere-hours).
     #[serde(rename="designCapacity")]
-    pub design_capacity: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub design_capacity: Option<i64>,
     /// Output only. Designed minimum output voltage (mV)
     #[serde(rename="designMinVoltage")]
+    
     pub design_min_voltage: Option<i32>,
     /// Output only. The date the battery was manufactured.
     #[serde(rename="manufactureDate")]
+    
     pub manufacture_date: Option<GoogleTypeDate>,
     /// Output only. Battery manufacturer.
+    
     pub manufacturer: Option<String>,
     /// Output only. Battery serial number.
     #[serde(rename="serialNumber")]
+    
     pub serial_number: Option<String>,
     /// Output only. Technology of the battery. Example: Li-ion
+    
     pub technology: Option<String>,
 }
 
@@ -295,28 +329,40 @@ impl client::Part for GoogleChromeManagementV1BatteryInfo {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1BatterySampleReport {
     /// Output only. Battery charge percentage.
     #[serde(rename="chargeRate")]
+    
     pub charge_rate: Option<i32>,
     /// Output only. Battery current (mA).
-    pub current: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub current: Option<i64>,
     /// Output only. The battery discharge rate measured in mW. Positive if the battery is being discharged, negative if it's being charged.
     #[serde(rename="dischargeRate")]
+    
     pub discharge_rate: Option<i32>,
     /// Output only. Battery remaining capacity (mAmpere-hours).
     #[serde(rename="remainingCapacity")]
-    pub remaining_capacity: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub remaining_capacity: Option<i64>,
     /// Output only. Timestamp of when the sample was collected on device
     #[serde(rename="reportTime")]
-    pub report_time: Option<String>,
+    
+    pub report_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Output only. Battery status read from sysfs. Example: Discharging
+    
     pub status: Option<String>,
     /// Output only. Temperature in Celsius degrees.
+    
     pub temperature: Option<i32>,
     /// Output only. Battery voltage (millivolt).
-    pub voltage: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub voltage: Option<i64>,
 }
 
 impl client::Part for GoogleChromeManagementV1BatterySampleReport {}
@@ -326,24 +372,32 @@ impl client::Part for GoogleChromeManagementV1BatterySampleReport {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1BatteryStatusReport {
     /// Output only. Battery health.
     #[serde(rename="batteryHealth")]
+    
     pub battery_health: Option<String>,
     /// Output only. Cycle count.
     #[serde(rename="cycleCount")]
+    
     pub cycle_count: Option<i32>,
     /// Output only. Full charge capacity (mAmpere-hours).
     #[serde(rename="fullChargeCapacity")]
-    pub full_charge_capacity: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub full_charge_capacity: Option<i64>,
     /// Output only. Timestamp of when the sample was collected on device
     #[serde(rename="reportTime")]
-    pub report_time: Option<String>,
+    
+    pub report_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Output only. Sampling data for the battery.
+    
     pub sample: Option<Vec<GoogleChromeManagementV1BatterySampleReport>>,
     /// Output only. Battery serial number.
     #[serde(rename="serialNumber")]
+    
     pub serial_number: Option<String>,
 }
 
@@ -354,18 +408,25 @@ impl client::Part for GoogleChromeManagementV1BatteryStatusReport {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1BrowserVersion {
     /// Output only. The release channel of the installed browser.
+    
     pub channel: Option<String>,
     /// Output only. Count grouped by device_system and major version
-    pub count: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub count: Option<i64>,
     /// Output only. Version of the system-specified operating system.
     #[serde(rename="deviceOsVersion")]
+    
     pub device_os_version: Option<String>,
     /// Output only. The device operating system.
+    
     pub system: Option<String>,
     /// Output only. The full version of the installed browser.
+    
     pub version: Option<String>,
 }
 
@@ -376,27 +437,35 @@ impl client::Part for GoogleChromeManagementV1BrowserVersion {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1ChromeAppInfo {
     /// Output only. Whether the app or extension is built and maintained by Google. Version-specific field that will only be set when the requested app version is found.
     #[serde(rename="googleOwned")]
+    
     pub google_owned: Option<bool>,
     /// Output only. Whether the app or extension is in a published state in the Chrome Web Store.
     #[serde(rename="isCwsHosted")]
+    
     pub is_cws_hosted: Option<bool>,
     /// Output only. Whether the app or extension is a theme.
     #[serde(rename="isTheme")]
+    
     pub is_theme: Option<bool>,
     /// Output only. The minimum number of users using this app.
     #[serde(rename="minUserCount")]
+    
     pub min_user_count: Option<i32>,
     /// Output only. Every custom permission requested by the app. Version-specific field that will only be set when the requested app version is found.
+    
     pub permissions: Option<Vec<GoogleChromeManagementV1ChromeAppPermission>>,
     /// Output only. Every permission giving access to domains or broad host patterns. ( e.g. www.google.com). This includes the matches from content scripts as well as hosts in the permissions node of the manifest. Version-specific field that will only be set when the requested app version is found.
     #[serde(rename="siteAccess")]
+    
     pub site_access: Option<Vec<GoogleChromeManagementV1ChromeAppSiteAccess>>,
     /// Output only. The app developer has enabled support for their app. Version-specific field that will only be set when the requested app version is found.
     #[serde(rename="supportEnabled")]
+    
     pub support_enabled: Option<bool>,
 }
 
@@ -407,16 +476,20 @@ impl client::Part for GoogleChromeManagementV1ChromeAppInfo {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1ChromeAppPermission {
     /// Output only. If available, whether this permissions grants the app/extension access to user data.
     #[serde(rename="accessUserData")]
+    
     pub access_user_data: Option<bool>,
     /// Output only. If available, a URI to a page that has documentation for the current permission.
     #[serde(rename="documentationUri")]
+    
     pub documentation_uri: Option<String>,
     /// Output only. The type of the permission.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -427,29 +500,38 @@ impl client::Part for GoogleChromeManagementV1ChromeAppPermission {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1ChromeAppRequest {
     /// Output only. Format: app_details=customers/{customer_id}/apps/chrome/{app_id}
     #[serde(rename="appDetails")]
+    
     pub app_details: Option<String>,
     /// Output only. Unique store identifier for the app. Example: "gmbmikajjgmnabiglmofipeabaddhgne" for the Save to Google Drive Chrome extension.
     #[serde(rename="appId")]
+    
     pub app_id: Option<String>,
     /// Output only. The uri for the detail page of the item.
     #[serde(rename="detailUri")]
+    
     pub detail_uri: Option<String>,
     /// Output only. App's display name.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// Output only. A link to an image that can be used as an icon for the product.
     #[serde(rename="iconUri")]
+    
     pub icon_uri: Option<String>,
     /// Output only. The timestamp of the most recently made request for this app.
     #[serde(rename="latestRequestTime")]
-    pub latest_request_time: Option<String>,
+    
+    pub latest_request_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Output only. Total count of requests for this app.
     #[serde(rename="requestCount")]
-    pub request_count: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub request_count: Option<i64>,
 }
 
 impl client::Part for GoogleChromeManagementV1ChromeAppRequest {}
@@ -459,10 +541,12 @@ impl client::Part for GoogleChromeManagementV1ChromeAppRequest {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1ChromeAppSiteAccess {
     /// Output only. This can contain very specific hosts, or patterns like "*.com" for instance.
     #[serde(rename="hostMatch")]
+    
     pub host_match: Option<String>,
 }
 
@@ -478,16 +562,20 @@ impl client::Part for GoogleChromeManagementV1ChromeAppSiteAccess {}
 /// 
 /// * [apps count chrome app requests customers](CustomerAppCountChromeAppRequestCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1CountChromeAppRequestsResponse {
     /// Token to specify the next page in the list.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// Count of requested apps matching request.
     #[serde(rename="requestedApps")]
+    
     pub requested_apps: Option<Vec<GoogleChromeManagementV1ChromeAppRequest>>,
     /// Total number of matching app requests.
     #[serde(rename="totalSize")]
+    
     pub total_size: Option<i32>,
 }
 
@@ -503,16 +591,20 @@ impl client::ResponseResult for GoogleChromeManagementV1CountChromeAppRequestsRe
 /// 
 /// * [reports count chrome versions customers](CustomerReportCountChromeVersionCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1CountChromeVersionsResponse {
     /// List of all browser versions and their install counts.
     #[serde(rename="browserVersions")]
+    
     pub browser_versions: Option<Vec<GoogleChromeManagementV1BrowserVersion>>,
     /// Token to specify the next page of the request.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// Total number browser versions matching request.
     #[serde(rename="totalSize")]
+    
     pub total_size: Option<i32>,
 }
 
@@ -528,16 +620,20 @@ impl client::ResponseResult for GoogleChromeManagementV1CountChromeVersionsRespo
 /// 
 /// * [reports count installed apps customers](CustomerReportCountInstalledAppCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1CountInstalledAppsResponse {
     /// List of installed apps matching request.
     #[serde(rename="installedApps")]
+    
     pub installed_apps: Option<Vec<GoogleChromeManagementV1InstalledApp>>,
     /// Token to specify the next page of the request.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// Total number of installed apps matching request.
     #[serde(rename="totalSize")]
+    
     pub total_size: Option<i32>,
 }
 
@@ -548,14 +644,18 @@ impl client::ResponseResult for GoogleChromeManagementV1CountInstalledAppsRespon
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1CpuInfo {
     /// Output only. The CPU architecture.
+    
     pub architecture: Option<String>,
     /// Output only. The max CPU clock speed in kHz.
     #[serde(rename="maxClockSpeed")]
+    
     pub max_clock_speed: Option<i32>,
     /// Output only. The CPU model name. Example: Intel(R) Core(TM) i5-8250U CPU @ 1.60GHz
+    
     pub model: Option<String>,
 }
 
@@ -566,20 +666,26 @@ impl client::Part for GoogleChromeManagementV1CpuInfo {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1CpuStatusReport {
     /// Output only. CPU temperature sample info per CPU core in Celsius
     #[serde(rename="cpuTemperatureInfo")]
+    
     pub cpu_temperature_info: Option<Vec<GoogleChromeManagementV1CpuTemperatureInfo>>,
     /// Output only. Sample of CPU utilization (0-100 percent).
     #[serde(rename="cpuUtilizationPct")]
+    
     pub cpu_utilization_pct: Option<i32>,
     /// Output only. The timestamp in milliseconds representing time at which this report was sampled.
     #[serde(rename="reportTime")]
-    pub report_time: Option<String>,
+    
+    pub report_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Output only. Frequency the report is sampled.
     #[serde(rename="sampleFrequency")]
-    pub sample_frequency: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde::duration::Wrapper>")]
+    pub sample_frequency: Option<client::chrono::Duration>,
 }
 
 impl client::Part for GoogleChromeManagementV1CpuStatusReport {}
@@ -589,12 +695,15 @@ impl client::Part for GoogleChromeManagementV1CpuStatusReport {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1CpuTemperatureInfo {
     /// Output only. CPU label. Example: Core 0
+    
     pub label: Option<String>,
     /// Output only. CPU temperature in Celsius.
     #[serde(rename="temperatureCelsius")]
+    
     pub temperature_celsius: Option<i32>,
 }
 
@@ -605,12 +714,15 @@ impl client::Part for GoogleChromeManagementV1CpuTemperatureInfo {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1Device {
     /// Output only. The ID of the device that reported this Chrome browser information.
     #[serde(rename="deviceId")]
+    
     pub device_id: Option<String>,
     /// Output only. The name of the machine within its local network.
+    
     pub machine: Option<String>,
 }
 
@@ -621,44 +733,65 @@ impl client::Part for GoogleChromeManagementV1Device {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1DiskInfo {
     /// Output only. Number of bytes read since last boot.
     #[serde(rename="bytesReadThisSession")]
-    pub bytes_read_this_session: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub bytes_read_this_session: Option<i64>,
     /// Output only. Number of bytes written since last boot.
     #[serde(rename="bytesWrittenThisSession")]
-    pub bytes_written_this_session: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub bytes_written_this_session: Option<i64>,
     /// Output only. Time spent discarding since last boot. Discarding is writing to clear blocks which are no longer in use. Supported on kernels 4.18+.
     #[serde(rename="discardTimeThisSession")]
-    pub discard_time_this_session: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde::duration::Wrapper>")]
+    pub discard_time_this_session: Option<client::chrono::Duration>,
     /// Output only. Disk health.
+    
     pub health: Option<String>,
     /// Output only. Counts the time the disk and queue were busy, so unlike the fields above, parallel requests are not counted multiple times.
     #[serde(rename="ioTimeThisSession")]
-    pub io_time_this_session: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde::duration::Wrapper>")]
+    pub io_time_this_session: Option<client::chrono::Duration>,
     /// Output only. Disk manufacturer.
+    
     pub manufacturer: Option<String>,
     /// Output only. Disk model.
+    
     pub model: Option<String>,
     /// Output only. Time spent reading from disk since last boot.
     #[serde(rename="readTimeThisSession")]
-    pub read_time_this_session: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde::duration::Wrapper>")]
+    pub read_time_this_session: Option<client::chrono::Duration>,
     /// Output only. Disk serial number.
     #[serde(rename="serialNumber")]
+    
     pub serial_number: Option<String>,
     /// Output only. Disk size.
     #[serde(rename="sizeBytes")]
-    pub size_bytes: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub size_bytes: Option<i64>,
     /// Output only. Disk type: eMMC / NVMe / ATA / SCSI.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
     /// Output only. Disk volumes.
     #[serde(rename="volumeIds")]
+    
     pub volume_ids: Option<Vec<String>>,
     /// Output only. Time spent writing to disk since last boot.
     #[serde(rename="writeTimeThisSession")]
-    pub write_time_this_session: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde::duration::Wrapper>")]
+    pub write_time_this_session: Option<client::chrono::Duration>,
 }
 
 impl client::Part for GoogleChromeManagementV1DiskInfo {}
@@ -668,22 +801,29 @@ impl client::Part for GoogleChromeManagementV1DiskInfo {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1DisplayInfo {
     /// Output only. Represents the graphics card device id.
     #[serde(rename="deviceId")]
-    pub device_id: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub device_id: Option<i64>,
     /// Output only. Indicates if display is internal or not.
     #[serde(rename="isInternal")]
+    
     pub is_internal: Option<bool>,
     /// Output only. Refresh rate in Hz.
     #[serde(rename="refreshRate")]
+    
     pub refresh_rate: Option<i32>,
     /// Output only. Resolution height in pixels.
     #[serde(rename="resolutionHeight")]
+    
     pub resolution_height: Option<i32>,
     /// Output only. Resolution width in pixels.
     #[serde(rename="resolutionWidth")]
+    
     pub resolution_width: Option<i32>,
 }
 
@@ -699,15 +839,19 @@ impl client::Part for GoogleChromeManagementV1DisplayInfo {}
 /// 
 /// * [reports find installed app devices customers](CustomerReportFindInstalledAppDeviceCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1FindInstalledAppDevicesResponse {
     /// A list of devices which have the app installed. Sorted in ascending alphabetical order on the Device.machine field.
+    
     pub devices: Option<Vec<GoogleChromeManagementV1Device>>,
     /// Token to specify the next page of the request.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// Total number of devices matching request.
     #[serde(rename="totalSize")]
+    
     pub total_size: Option<i32>,
 }
 
@@ -718,15 +862,20 @@ impl client::ResponseResult for GoogleChromeManagementV1FindInstalledAppDevicesR
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1GraphicsAdapterInfo {
     /// Output only. Adapter name. Example: Mesa DRI Intel(R) UHD Graphics 620 (Kabylake GT2).
+    
     pub adapter: Option<String>,
     /// Output only. Represents the graphics card device id.
     #[serde(rename="deviceId")]
-    pub device_id: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub device_id: Option<i64>,
     /// Output only. Version of the GPU driver.
     #[serde(rename="driverVersion")]
+    
     pub driver_version: Option<String>,
 }
 
@@ -737,10 +886,12 @@ impl client::Part for GoogleChromeManagementV1GraphicsAdapterInfo {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1GraphicsInfo {
     /// Output only. Information about the graphics adapter (GPU).
     #[serde(rename="adapterInfo")]
+    
     pub adapter_info: Option<GoogleChromeManagementV1GraphicsAdapterInfo>,
 }
 
@@ -751,13 +902,16 @@ impl client::Part for GoogleChromeManagementV1GraphicsInfo {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1GraphicsStatusReport {
     /// Output only. Information about the displays for the device.
+    
     pub displays: Option<Vec<GoogleChromeManagementV1DisplayInfo>>,
     /// Output only. Time at which the graphics data was reported.
     #[serde(rename="reportTime")]
-    pub report_time: Option<String>,
+    
+    pub report_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
 }
 
 impl client::Part for GoogleChromeManagementV1GraphicsStatusReport {}
@@ -767,37 +921,51 @@ impl client::Part for GoogleChromeManagementV1GraphicsStatusReport {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1InstalledApp {
     /// Output only. Unique identifier of the app. For Chrome apps and extensions, the 32-character id (e.g. ehoadneljpdggcbbknedodolkkjodefl). For Android apps, the package name (e.g. com.evernote).
     #[serde(rename="appId")]
+    
     pub app_id: Option<String>,
     /// Output only. How the app was installed.
     #[serde(rename="appInstallType")]
+    
     pub app_install_type: Option<String>,
     /// Output only. Source of the installed app.
     #[serde(rename="appSource")]
+    
     pub app_source: Option<String>,
     /// Output only. Type of the app.
     #[serde(rename="appType")]
+    
     pub app_type: Option<String>,
     /// Output only. Count of browser devices with this app installed.
     #[serde(rename="browserDeviceCount")]
-    pub browser_device_count: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub browser_device_count: Option<i64>,
     /// Output only. Description of the installed app.
+    
     pub description: Option<String>,
     /// Output only. Whether the app is disabled.
+    
     pub disabled: Option<bool>,
     /// Output only. Name of the installed app.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// Output only. Homepage uri of the installed app.
     #[serde(rename="homepageUri")]
+    
     pub homepage_uri: Option<String>,
     /// Output only. Count of ChromeOS users with this app installed.
     #[serde(rename="osUserCount")]
-    pub os_user_count: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub os_user_count: Option<i64>,
     /// Output only. Permissions of the installed app.
+    
     pub permissions: Option<Vec<String>>,
 }
 
@@ -813,12 +981,15 @@ impl client::Part for GoogleChromeManagementV1InstalledApp {}
 /// 
 /// * [telemetry devices list customers](CustomerTelemetryDeviceListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1ListTelemetryDevicesResponse {
     /// Telemetry devices returned in the response.
+    
     pub devices: Option<Vec<GoogleChromeManagementV1TelemetryDevice>>,
     /// Token to specify next page in the list.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
 }
 
@@ -829,14 +1000,19 @@ impl client::ResponseResult for GoogleChromeManagementV1ListTelemetryDevicesResp
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1MemoryInfo {
     /// Output only. Amount of available RAM in bytes.
     #[serde(rename="availableRamBytes")]
-    pub available_ram_bytes: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub available_ram_bytes: Option<i64>,
     /// Output only. Total RAM in bytes.
     #[serde(rename="totalRamBytes")]
-    pub total_ram_bytes: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub total_ram_bytes: Option<i64>,
 }
 
 impl client::Part for GoogleChromeManagementV1MemoryInfo {}
@@ -846,20 +1022,27 @@ impl client::Part for GoogleChromeManagementV1MemoryInfo {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1MemoryStatusReport {
     /// Output only. Number of page faults during this collection
     #[serde(rename="pageFaults")]
+    
     pub page_faults: Option<i32>,
     /// Output only. The timestamp in milliseconds representing time at which this report was sampled.
     #[serde(rename="reportTime")]
-    pub report_time: Option<String>,
+    
+    pub report_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Output only. Frequency the report is sampled.
     #[serde(rename="sampleFrequency")]
-    pub sample_frequency: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde::duration::Wrapper>")]
+    pub sample_frequency: Option<client::chrono::Duration>,
     /// Output only. Amount of free RAM in bytes (unreliable due to Garbage Collection).
     #[serde(rename="systemRamFreeBytes")]
-    pub system_ram_free_bytes: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub system_ram_free_bytes: Option<i64>,
 }
 
 impl client::Part for GoogleChromeManagementV1MemoryStatusReport {}
@@ -869,22 +1052,29 @@ impl client::Part for GoogleChromeManagementV1MemoryStatusReport {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1NetworkStatusReport {
     /// Output only. Gateway IP address.
     #[serde(rename="gatewayIpAddress")]
+    
     pub gateway_ip_address: Option<String>,
     /// Output only. LAN IP address.
     #[serde(rename="lanIpAddress")]
+    
     pub lan_ip_address: Option<String>,
     /// Output only. Time at which the network state was reported.
     #[serde(rename="reportTime")]
-    pub report_time: Option<String>,
+    
+    pub report_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Output only. Frequency the report is sampled.
     #[serde(rename="sampleFrequency")]
-    pub sample_frequency: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde::duration::Wrapper>")]
+    pub sample_frequency: Option<client::chrono::Duration>,
     /// Output only. Signal strength for wireless networks measured in decibels.
     #[serde(rename="signalStrengthDbm")]
+    
     pub signal_strength_dbm: Option<i32>,
 }
 
@@ -895,25 +1085,32 @@ impl client::Part for GoogleChromeManagementV1NetworkStatusReport {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1OsUpdateStatus {
     /// Output only. Timestamp of the last reboot.
     #[serde(rename="lastRebootTime")]
-    pub last_reboot_time: Option<String>,
+    
+    pub last_reboot_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Output only. Timestamp of the last update check.
     #[serde(rename="lastUpdateCheckTime")]
-    pub last_update_check_time: Option<String>,
+    
+    pub last_update_check_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Output only. Timestamp of the last successful update.
     #[serde(rename="lastUpdateTime")]
-    pub last_update_time: Option<String>,
+    
+    pub last_update_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Output only. New platform version of the os image being downloaded and applied. It is only set when update status is OS_IMAGE_DOWNLOAD_IN_PROGRESS or OS_UPDATE_NEED_REBOOT. Note this could be a dummy "0.0.0.0" for OS_UPDATE_NEED_REBOOT status for some edge cases, e.g. update engine is restarted without a reboot.
     #[serde(rename="newPlatformVersion")]
+    
     pub new_platform_version: Option<String>,
     /// Output only. New requested platform version from the pending updated kiosk app.
     #[serde(rename="newRequestedPlatformVersion")]
+    
     pub new_requested_platform_version: Option<String>,
     /// Output only. Current state of the os update.
     #[serde(rename="updateState")]
+    
     pub update_state: Option<String>,
 }
 
@@ -924,15 +1121,21 @@ impl client::Part for GoogleChromeManagementV1OsUpdateStatus {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1StorageInfo {
     /// The available space for user data storage in the device in bytes.
     #[serde(rename="availableDiskBytes")]
-    pub available_disk_bytes: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub available_disk_bytes: Option<i64>,
     /// The total space for user data storage in the device in bytes.
     #[serde(rename="totalDiskBytes")]
-    pub total_disk_bytes: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub total_disk_bytes: Option<i64>,
     /// Information for disk volumes
+    
     pub volume: Option<Vec<GoogleChromeManagementV1StorageInfoDiskVolume>>,
 }
 
@@ -943,16 +1146,22 @@ impl client::Part for GoogleChromeManagementV1StorageInfo {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1StorageInfoDiskVolume {
     /// Free storage space in bytes.
     #[serde(rename="storageFreeBytes")]
-    pub storage_free_bytes: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub storage_free_bytes: Option<i64>,
     /// Total storage space in bytes.
     #[serde(rename="storageTotalBytes")]
-    pub storage_total_bytes: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub storage_total_bytes: Option<i64>,
     /// Disk volume id.
     #[serde(rename="volumeId")]
+    
     pub volume_id: Option<String>,
 }
 
@@ -963,13 +1172,16 @@ impl client::Part for GoogleChromeManagementV1StorageInfoDiskVolume {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1StorageStatusReport {
     /// Output only. Reports on disk
+    
     pub disk: Option<Vec<GoogleChromeManagementV1DiskInfo>>,
     /// Output only. Timestamp of when the sample was collected on device
     #[serde(rename="reportTime")]
-    pub report_time: Option<String>,
+    
+    pub report_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
 }
 
 impl client::Part for GoogleChromeManagementV1StorageStatusReport {}
@@ -979,56 +1191,74 @@ impl client::Part for GoogleChromeManagementV1StorageStatusReport {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleChromeManagementV1TelemetryDevice {
     /// Output only. Information on battery specs for the device.
     #[serde(rename="batteryInfo")]
+    
     pub battery_info: Option<Vec<GoogleChromeManagementV1BatteryInfo>>,
     /// Output only. Battery reports collected periodically.
     #[serde(rename="batteryStatusReport")]
+    
     pub battery_status_report: Option<Vec<GoogleChromeManagementV1BatteryStatusReport>>,
     /// Output only. Information regarding CPU specs for the device.
     #[serde(rename="cpuInfo")]
+    
     pub cpu_info: Option<Vec<GoogleChromeManagementV1CpuInfo>>,
     /// Output only. CPU status reports collected periodically.
     #[serde(rename="cpuStatusReport")]
+    
     pub cpu_status_report: Option<Vec<GoogleChromeManagementV1CpuStatusReport>>,
     /// Output only. Google Workspace Customer whose enterprise enrolled the device.
+    
     pub customer: Option<String>,
     /// Output only. The unique Directory API ID of the device. This value is the same as the Admin Console's Directory API ID in the Chrome OS Devices tab
     #[serde(rename="deviceId")]
+    
     pub device_id: Option<String>,
     /// Output only. Contains information regarding Graphic peripherals for the device.
     #[serde(rename="graphicsInfo")]
+    
     pub graphics_info: Option<GoogleChromeManagementV1GraphicsInfo>,
     /// Output only. Graphics reports collected periodically.
     #[serde(rename="graphicsStatusReport")]
+    
     pub graphics_status_report: Option<Vec<GoogleChromeManagementV1GraphicsStatusReport>>,
     /// Output only. Information regarding memory specs for the device.
     #[serde(rename="memoryInfo")]
+    
     pub memory_info: Option<GoogleChromeManagementV1MemoryInfo>,
     /// Output only. Memory status reports collected periodically.
     #[serde(rename="memoryStatusReport")]
+    
     pub memory_status_report: Option<Vec<GoogleChromeManagementV1MemoryStatusReport>>,
     /// Output only. Resource name of the device.
+    
     pub name: Option<String>,
     /// Output only. Network specs collected periodically.
     #[serde(rename="networkStatusReport")]
+    
     pub network_status_report: Option<Vec<GoogleChromeManagementV1NetworkStatusReport>>,
     /// Output only. Organization unit ID of the device.
     #[serde(rename="orgUnitId")]
+    
     pub org_unit_id: Option<String>,
     /// Output only. Contains relevant information regarding ChromeOS update status.
     #[serde(rename="osUpdateStatus")]
+    
     pub os_update_status: Option<Vec<GoogleChromeManagementV1OsUpdateStatus>>,
     /// Output only. Device serial number. This value is the same as the Admin Console's Serial Number in the Chrome OS Devices tab.
     #[serde(rename="serialNumber")]
+    
     pub serial_number: Option<String>,
     /// Output only. Information of storage specs for the device.
     #[serde(rename="storageInfo")]
+    
     pub storage_info: Option<GoogleChromeManagementV1StorageInfo>,
     /// Output only. Storage reports collected periodically.
     #[serde(rename="storageStatusReport")]
+    
     pub storage_status_report: Option<Vec<GoogleChromeManagementV1StorageStatusReport>>,
 }
 
@@ -1039,13 +1269,17 @@ impl client::Part for GoogleChromeManagementV1TelemetryDevice {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleRpcStatus {
     /// The status code, which should be an enum value of google.rpc.Code.
+    
     pub code: Option<i32>,
     /// A list of messages that carry the error details. There is a common set of message types for APIs to use.
+    
     pub details: Option<Vec<HashMap<String, String>>>,
     /// A developer-facing error message, which should be in English. Any user-facing error message should be localized and sent in the google.rpc.Status.details field, or localized by the client.
+    
     pub message: Option<String>,
 }
 
@@ -1056,13 +1290,17 @@ impl client::Part for GoogleRpcStatus {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleTypeDate {
     /// Day of a month. Must be from 1 to 31 and valid for the year and month, or 0 to specify a year by itself or a year and month where the day isn't significant.
+    
     pub day: Option<i32>,
     /// Month of a year. Must be from 1 to 12, or 0 to specify a year without a month and day.
+    
     pub month: Option<i32>,
     /// Year of the date. Must be from 1 to 9999, or 0 to specify a date without a year.
+    
     pub year: Option<i32>,
 }
 
@@ -1075,7 +1313,7 @@ impl client::Part for GoogleTypeDate {}
 // #################
 
 /// A builder providing access to all methods supported on *customer* resources.
-/// It is not used directly, but through the `ChromeManagement` hub.
+/// It is not used directly, but through the [`ChromeManagement`] hub.
 ///
 /// # Example
 ///
@@ -1088,7 +1326,7 @@ impl client::Part for GoogleTypeDate {}
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls};
+/// use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -1284,7 +1522,7 @@ impl<'a, S> CustomerMethods<'a, S> {
 /// Get a specific app for a customer by its resource name.
 ///
 /// A builder for the *apps.android.get* method supported by a *customer* resource.
-/// It is not used directly, but through a `CustomerMethods` instance.
+/// It is not used directly, but through a [`CustomerMethods`] instance.
 ///
 /// # Example
 ///
@@ -1296,7 +1534,7 @@ impl<'a, S> CustomerMethods<'a, S> {
 /// # extern crate google_chromemanagement1 as chromemanagement1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls};
+/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -1318,14 +1556,14 @@ pub struct CustomerAppAndroidGetCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CustomerAppAndroidGetCall<'a, S> {}
 
 impl<'a, S> CustomerAppAndroidGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -1334,74 +1572,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleChromeManagementV1AppDetails)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "chromemanagement.customers.apps.android.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::ChromeManagementAppdetailReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::ChromeManagementAppdetailReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -1409,21 +1628,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -1439,7 +1664,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -1483,7 +1708,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CustomerAppAndroidGetCall<'a, S> {
@@ -1519,25 +1745,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::ChromeManagementAppdetailReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::ChromeManagementAppdetailReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CustomerAppAndroidGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CustomerAppAndroidGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CustomerAppAndroidGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CustomerAppAndroidGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -1546,7 +1783,7 @@ where
 /// Get a specific app for a customer by its resource name.
 ///
 /// A builder for the *apps.chrome.get* method supported by a *customer* resource.
-/// It is not used directly, but through a `CustomerMethods` instance.
+/// It is not used directly, but through a [`CustomerMethods`] instance.
 ///
 /// # Example
 ///
@@ -1558,7 +1795,7 @@ where
 /// # extern crate google_chromemanagement1 as chromemanagement1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls};
+/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -1580,14 +1817,14 @@ pub struct CustomerAppChromeGetCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CustomerAppChromeGetCall<'a, S> {}
 
 impl<'a, S> CustomerAppChromeGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -1596,74 +1833,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleChromeManagementV1AppDetails)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "chromemanagement.customers.apps.chrome.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::ChromeManagementAppdetailReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::ChromeManagementAppdetailReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -1671,21 +1889,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -1701,7 +1925,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -1745,7 +1969,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CustomerAppChromeGetCall<'a, S> {
@@ -1781,25 +2006,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::ChromeManagementAppdetailReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::ChromeManagementAppdetailReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CustomerAppChromeGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CustomerAppChromeGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CustomerAppChromeGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CustomerAppChromeGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -1808,7 +2044,7 @@ where
 /// Get a specific app for a customer by its resource name.
 ///
 /// A builder for the *apps.web.get* method supported by a *customer* resource.
-/// It is not used directly, but through a `CustomerMethods` instance.
+/// It is not used directly, but through a [`CustomerMethods`] instance.
 ///
 /// # Example
 ///
@@ -1820,7 +2056,7 @@ where
 /// # extern crate google_chromemanagement1 as chromemanagement1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls};
+/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -1842,14 +2078,14 @@ pub struct CustomerAppWebGetCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CustomerAppWebGetCall<'a, S> {}
 
 impl<'a, S> CustomerAppWebGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -1858,74 +2094,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleChromeManagementV1AppDetails)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "chromemanagement.customers.apps.web.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::ChromeManagementAppdetailReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::ChromeManagementAppdetailReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -1933,21 +2150,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -1963,7 +2186,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -2007,7 +2230,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CustomerAppWebGetCall<'a, S> {
@@ -2043,25 +2267,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::ChromeManagementAppdetailReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::ChromeManagementAppdetailReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CustomerAppWebGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CustomerAppWebGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CustomerAppWebGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CustomerAppWebGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -2070,7 +2305,7 @@ where
 /// Generate summary of app installation requests.
 ///
 /// A builder for the *apps.countChromeAppRequests* method supported by a *customer* resource.
-/// It is not used directly, but through a `CustomerMethods` instance.
+/// It is not used directly, but through a [`CustomerMethods`] instance.
 ///
 /// # Example
 ///
@@ -2082,7 +2317,7 @@ where
 /// # extern crate google_chromemanagement1 as chromemanagement1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls};
+/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2112,14 +2347,14 @@ pub struct CustomerAppCountChromeAppRequestCall<'a, S>
     _order_by: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CustomerAppCountChromeAppRequestCall<'a, S> {}
 
 impl<'a, S> CustomerAppCountChromeAppRequestCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -2128,86 +2363,67 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleChromeManagementV1CountChromeAppRequestsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "chromemanagement.customers.apps.countChromeAppRequests",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("customer", self._customer.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
-        if let Some(value) = self._org_unit_id {
-            params.push(("orgUnitId", value.to_string()));
-        }
-        if let Some(value) = self._order_by {
-            params.push(("orderBy", value.to_string()));
-        }
+
         for &field in ["alt", "customer", "pageToken", "pageSize", "orgUnitId", "orderBy"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("customer", self._customer);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
+        }
+        if let Some(value) = self._org_unit_id.as_ref() {
+            params.push("orgUnitId", value);
+        }
+        if let Some(value) = self._order_by.as_ref() {
+            params.push("orderBy", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+customer}/apps:countChromeAppRequests";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::ChromeManagementAppdetailReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::ChromeManagementAppdetailReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+customer}", "customer")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["customer"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["customer"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -2215,21 +2431,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -2245,7 +2467,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -2317,7 +2539,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CustomerAppCountChromeAppRequestCall<'a, S> {
@@ -2353,25 +2576,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::ChromeManagementAppdetailReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::ChromeManagementAppdetailReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CustomerAppCountChromeAppRequestCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CustomerAppCountChromeAppRequestCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CustomerAppCountChromeAppRequestCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CustomerAppCountChromeAppRequestCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -2380,7 +2614,7 @@ where
 /// Generate report of installed Chrome versions.
 ///
 /// A builder for the *reports.countChromeVersions* method supported by a *customer* resource.
-/// It is not used directly, but through a `CustomerMethods` instance.
+/// It is not used directly, but through a [`CustomerMethods`] instance.
 ///
 /// # Example
 ///
@@ -2392,7 +2626,7 @@ where
 /// # extern crate google_chromemanagement1 as chromemanagement1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls};
+/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2422,14 +2656,14 @@ pub struct CustomerReportCountChromeVersionCall<'a, S>
     _filter: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CustomerReportCountChromeVersionCall<'a, S> {}
 
 impl<'a, S> CustomerReportCountChromeVersionCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -2438,86 +2672,67 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleChromeManagementV1CountChromeVersionsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "chromemanagement.customers.reports.countChromeVersions",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("customer", self._customer.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
-        if let Some(value) = self._org_unit_id {
-            params.push(("orgUnitId", value.to_string()));
-        }
-        if let Some(value) = self._filter {
-            params.push(("filter", value.to_string()));
-        }
+
         for &field in ["alt", "customer", "pageToken", "pageSize", "orgUnitId", "filter"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("customer", self._customer);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
+        }
+        if let Some(value) = self._org_unit_id.as_ref() {
+            params.push("orgUnitId", value);
+        }
+        if let Some(value) = self._filter.as_ref() {
+            params.push("filter", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+customer}/reports:countChromeVersions";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::ChromeManagementReportReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::ChromeManagementReportReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+customer}", "customer")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["customer"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["customer"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -2525,21 +2740,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -2555,7 +2776,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -2627,7 +2848,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CustomerReportCountChromeVersionCall<'a, S> {
@@ -2663,25 +2885,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::ChromeManagementReportReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::ChromeManagementReportReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CustomerReportCountChromeVersionCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CustomerReportCountChromeVersionCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CustomerReportCountChromeVersionCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CustomerReportCountChromeVersionCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -2690,7 +2923,7 @@ where
 /// Generate report of app installations.
 ///
 /// A builder for the *reports.countInstalledApps* method supported by a *customer* resource.
-/// It is not used directly, but through a `CustomerMethods` instance.
+/// It is not used directly, but through a [`CustomerMethods`] instance.
 ///
 /// # Example
 ///
@@ -2702,7 +2935,7 @@ where
 /// # extern crate google_chromemanagement1 as chromemanagement1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls};
+/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2734,14 +2967,14 @@ pub struct CustomerReportCountInstalledAppCall<'a, S>
     _filter: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CustomerReportCountInstalledAppCall<'a, S> {}
 
 impl<'a, S> CustomerReportCountInstalledAppCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -2750,89 +2983,70 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleChromeManagementV1CountInstalledAppsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "chromemanagement.customers.reports.countInstalledApps",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(8 + self._additional_params.len());
-        params.push(("customer", self._customer.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
-        if let Some(value) = self._org_unit_id {
-            params.push(("orgUnitId", value.to_string()));
-        }
-        if let Some(value) = self._order_by {
-            params.push(("orderBy", value.to_string()));
-        }
-        if let Some(value) = self._filter {
-            params.push(("filter", value.to_string()));
-        }
+
         for &field in ["alt", "customer", "pageToken", "pageSize", "orgUnitId", "orderBy", "filter"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(8 + self._additional_params.len());
+        params.push("customer", self._customer);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
+        }
+        if let Some(value) = self._org_unit_id.as_ref() {
+            params.push("orgUnitId", value);
+        }
+        if let Some(value) = self._order_by.as_ref() {
+            params.push("orderBy", value);
+        }
+        if let Some(value) = self._filter.as_ref() {
+            params.push("filter", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+customer}/reports:countInstalledApps";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::ChromeManagementReportReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::ChromeManagementReportReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+customer}", "customer")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["customer"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["customer"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -2840,21 +3054,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -2870,7 +3090,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -2949,7 +3169,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CustomerReportCountInstalledAppCall<'a, S> {
@@ -2985,25 +3206,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::ChromeManagementReportReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::ChromeManagementReportReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CustomerReportCountInstalledAppCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CustomerReportCountInstalledAppCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CustomerReportCountInstalledAppCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CustomerReportCountInstalledAppCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -3012,7 +3244,7 @@ where
 /// Generate report of devices that have a specified app installed.
 ///
 /// A builder for the *reports.findInstalledAppDevices* method supported by a *customer* resource.
-/// It is not used directly, but through a `CustomerMethods` instance.
+/// It is not used directly, but through a [`CustomerMethods`] instance.
 ///
 /// # Example
 ///
@@ -3024,7 +3256,7 @@ where
 /// # extern crate google_chromemanagement1 as chromemanagement1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls};
+/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3060,14 +3292,14 @@ pub struct CustomerReportFindInstalledAppDeviceCall<'a, S>
     _app_id: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CustomerReportFindInstalledAppDeviceCall<'a, S> {}
 
 impl<'a, S> CustomerReportFindInstalledAppDeviceCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -3076,95 +3308,76 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleChromeManagementV1FindInstalledAppDevicesResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "chromemanagement.customers.reports.findInstalledAppDevices",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(10 + self._additional_params.len());
-        params.push(("customer", self._customer.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
-        if let Some(value) = self._org_unit_id {
-            params.push(("orgUnitId", value.to_string()));
-        }
-        if let Some(value) = self._order_by {
-            params.push(("orderBy", value.to_string()));
-        }
-        if let Some(value) = self._filter {
-            params.push(("filter", value.to_string()));
-        }
-        if let Some(value) = self._app_type {
-            params.push(("appType", value.to_string()));
-        }
-        if let Some(value) = self._app_id {
-            params.push(("appId", value.to_string()));
-        }
+
         for &field in ["alt", "customer", "pageToken", "pageSize", "orgUnitId", "orderBy", "filter", "appType", "appId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(10 + self._additional_params.len());
+        params.push("customer", self._customer);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
+        }
+        if let Some(value) = self._org_unit_id.as_ref() {
+            params.push("orgUnitId", value);
+        }
+        if let Some(value) = self._order_by.as_ref() {
+            params.push("orderBy", value);
+        }
+        if let Some(value) = self._filter.as_ref() {
+            params.push("filter", value);
+        }
+        if let Some(value) = self._app_type.as_ref() {
+            params.push("appType", value);
+        }
+        if let Some(value) = self._app_id.as_ref() {
+            params.push("appId", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+customer}/reports:findInstalledAppDevices";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::ChromeManagementReportReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::ChromeManagementReportReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+customer}", "customer")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["customer"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["customer"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -3172,21 +3385,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -3202,7 +3421,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -3295,7 +3514,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CustomerReportFindInstalledAppDeviceCall<'a, S> {
@@ -3331,25 +3551,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::ChromeManagementReportReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::ChromeManagementReportReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CustomerReportFindInstalledAppDeviceCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CustomerReportFindInstalledAppDeviceCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CustomerReportFindInstalledAppDeviceCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CustomerReportFindInstalledAppDeviceCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -3358,7 +3589,7 @@ where
 /// List all telemetry devices.
 ///
 /// A builder for the *telemetry.devices.list* method supported by a *customer* resource.
-/// It is not used directly, but through a `CustomerMethods` instance.
+/// It is not used directly, but through a [`CustomerMethods`] instance.
 ///
 /// # Example
 ///
@@ -3370,7 +3601,7 @@ where
 /// # extern crate google_chromemanagement1 as chromemanagement1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls};
+/// # use chromemanagement1::{ChromeManagement, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3382,10 +3613,10 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.customers().telemetry_devices_list("parent")
-///              .read_mask("est")
-///              .page_token("gubergren")
-///              .page_size(-17)
-///              .filter("dolor")
+///              .read_mask(&Default::default())
+///              .page_token("est")
+///              .page_size(-62)
+///              .filter("ea")
 ///              .doit().await;
 /// # }
 /// ```
@@ -3394,20 +3625,20 @@ pub struct CustomerTelemetryDeviceListCall<'a, S>
 
     hub: &'a ChromeManagement<S>,
     _parent: String,
-    _read_mask: Option<String>,
+    _read_mask: Option<client::FieldMask>,
     _page_token: Option<String>,
     _page_size: Option<i32>,
     _filter: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CustomerTelemetryDeviceListCall<'a, S> {}
 
 impl<'a, S> CustomerTelemetryDeviceListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -3416,86 +3647,67 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleChromeManagementV1ListTelemetryDevicesResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "chromemanagement.customers.telemetry.devices.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._read_mask {
-            params.push(("readMask", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
-        if let Some(value) = self._filter {
-            params.push(("filter", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "readMask", "pageToken", "pageSize", "filter"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._read_mask.as_ref() {
+            params.push("readMask", value.to_string());
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
+        }
+        if let Some(value) = self._filter.as_ref() {
+            params.push("filter", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/telemetry/devices";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::ChromeManagementTelemetryReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::ChromeManagementTelemetryReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -3503,21 +3715,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -3533,7 +3751,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -3577,8 +3795,8 @@ where
     /// Required. Read mask to specify which fields to return.
     ///
     /// Sets the *read mask* query property to the given value.
-    pub fn read_mask(mut self, new_value: &str) -> CustomerTelemetryDeviceListCall<'a, S> {
-        self._read_mask = Some(new_value.to_string());
+    pub fn read_mask(mut self, new_value: client::FieldMask) -> CustomerTelemetryDeviceListCall<'a, S> {
+        self._read_mask = Some(new_value);
         self
     }
     /// Token to specify next page in the list.
@@ -3605,7 +3823,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CustomerTelemetryDeviceListCall<'a, S> {
@@ -3641,25 +3860,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::ChromeManagementTelemetryReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::ChromeManagementTelemetryReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CustomerTelemetryDeviceListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CustomerTelemetryDeviceListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CustomerTelemetryDeviceListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CustomerTelemetryDeviceListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }

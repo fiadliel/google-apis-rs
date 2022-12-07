@@ -2,7 +2,7 @@
 // This file was generated automatically from 'src/generator/templates/api/lib.rs.mako'
 // DO NOT EDIT !
 
-//! This documentation was generated from *compute* crate version *4.0.1+20220224*, where *20220224* is the exact revision of the *compute:v1* schema built by the [mako](http://www.makotemplates.org/) code generator *v4.0.1*.
+//! This documentation was generated from *compute* crate version *5.0.2-beta-1+20220224*, where *20220224* is the exact revision of the *compute:v1* schema built by the [mako](http://www.makotemplates.org/) code generator *v5.0.2-beta-1*.
 //! 
 //! Everything else about the *compute* *v1* API can be found at the
 //! [official documentation site](https://cloud.google.com/compute/).
@@ -13,8 +13,8 @@
 //! 
 //! * [accelerator types](api::AcceleratorType)
 //!  * [*aggregated list*](api::AcceleratorTypeAggregatedListCall), [*get*](api::AcceleratorTypeGetCall) and [*list*](api::AcceleratorTypeListCall)
-//! * addresses
-//!  * [*aggregated list*](api::AddresseAggregatedListCall), [*delete*](api::AddresseDeleteCall), [*get*](api::AddresseGetCall), [*insert*](api::AddresseInsertCall) and [*list*](api::AddresseListCall)
+//! * [addresses](api::Address)
+//!  * [*aggregated list*](api::AddressAggregatedListCall), [*delete*](api::AddressDeleteCall), [*get*](api::AddressGetCall), [*insert*](api::AddressInsertCall) and [*list*](api::AddressListCall)
 //! * [autoscalers](api::Autoscaler)
 //!  * [*aggregated list*](api::AutoscalerAggregatedListCall), [*delete*](api::AutoscalerDeleteCall), [*get*](api::AutoscalerGetCall), [*insert*](api::AutoscalerInsertCall), [*list*](api::AutoscalerListCall), [*patch*](api::AutoscalerPatchCall) and [*update*](api::AutoscalerUpdateCall)
 //! * [backend buckets](api::BackendBucket)
@@ -34,7 +34,7 @@
 //! * [forwarding rules](api::ForwardingRule)
 //!  * [*aggregated list*](api::ForwardingRuleAggregatedListCall), [*delete*](api::ForwardingRuleDeleteCall), [*get*](api::ForwardingRuleGetCall), [*insert*](api::ForwardingRuleInsertCall), [*list*](api::ForwardingRuleListCall), [*patch*](api::ForwardingRulePatchCall), [*set labels*](api::ForwardingRuleSetLabelCall) and [*set target*](api::ForwardingRuleSetTargetCall)
 //! * global addresses
-//!  * [*delete*](api::GlobalAddresseDeleteCall), [*get*](api::GlobalAddresseGetCall), [*insert*](api::GlobalAddresseInsertCall) and [*list*](api::GlobalAddresseListCall)
+//!  * [*delete*](api::GlobalAddressDeleteCall), [*get*](api::GlobalAddressGetCall), [*insert*](api::GlobalAddressInsertCall) and [*list*](api::GlobalAddressListCall)
 //! * global forwarding rules
 //!  * [*delete*](api::GlobalForwardingRuleDeleteCall), [*get*](api::GlobalForwardingRuleGetCall), [*insert*](api::GlobalForwardingRuleInsertCall), [*list*](api::GlobalForwardingRuleListCall), [*patch*](api::GlobalForwardingRulePatchCall), [*set labels*](api::GlobalForwardingRuleSetLabelCall) and [*set target*](api::GlobalForwardingRuleSetTargetCall)
 //! * global network endpoint groups
@@ -44,7 +44,7 @@
 //! * global organization operations
 //!  * [*delete*](api::GlobalOrganizationOperationDeleteCall), [*get*](api::GlobalOrganizationOperationGetCall) and [*list*](api::GlobalOrganizationOperationListCall)
 //! * global public delegated prefixes
-//!  * [*delete*](api::GlobalPublicDelegatedPrefixeDeleteCall), [*get*](api::GlobalPublicDelegatedPrefixeGetCall), [*insert*](api::GlobalPublicDelegatedPrefixeInsertCall), [*list*](api::GlobalPublicDelegatedPrefixeListCall) and [*patch*](api::GlobalPublicDelegatedPrefixePatchCall)
+//!  * [*delete*](api::GlobalPublicDelegatedPrefixDeleteCall), [*get*](api::GlobalPublicDelegatedPrefixGetCall), [*insert*](api::GlobalPublicDelegatedPrefixInsertCall), [*list*](api::GlobalPublicDelegatedPrefixListCall) and [*patch*](api::GlobalPublicDelegatedPrefixPatchCall)
 //! * [health checks](api::HealthCheck)
 //!  * [*aggregated list*](api::HealthCheckAggregatedListCall), [*delete*](api::HealthCheckDeleteCall), [*get*](api::HealthCheckGetCall), [*insert*](api::HealthCheckInsertCall), [*list*](api::HealthCheckListCall), [*patch*](api::HealthCheckPatchCall) and [*update*](api::HealthCheckUpdateCall)
 //! * [http health checks](api::HttpHealthCheck)
@@ -93,10 +93,10 @@
 //!  * [*aggregated list*](api::PacketMirroringAggregatedListCall), [*delete*](api::PacketMirroringDeleteCall), [*get*](api::PacketMirroringGetCall), [*insert*](api::PacketMirroringInsertCall), [*list*](api::PacketMirroringListCall), [*patch*](api::PacketMirroringPatchCall) and [*test iam permissions*](api::PacketMirroringTestIamPermissionCall)
 //! * [projects](api::Project)
 //!  * [*disable xpn host*](api::ProjectDisableXpnHostCall), [*disable xpn resource*](api::ProjectDisableXpnResourceCall), [*enable xpn host*](api::ProjectEnableXpnHostCall), [*enable xpn resource*](api::ProjectEnableXpnResourceCall), [*get*](api::ProjectGetCall), [*get xpn host*](api::ProjectGetXpnHostCall), [*get xpn resources*](api::ProjectGetXpnResourceCall), [*list xpn hosts*](api::ProjectListXpnHostCall), [*move disk*](api::ProjectMoveDiskCall), [*move instance*](api::ProjectMoveInstanceCall), [*set common instance metadata*](api::ProjectSetCommonInstanceMetadataCall), [*set default network tier*](api::ProjectSetDefaultNetworkTierCall) and [*set usage export bucket*](api::ProjectSetUsageExportBucketCall)
-//! * public advertised prefixes
-//!  * [*delete*](api::PublicAdvertisedPrefixeDeleteCall), [*get*](api::PublicAdvertisedPrefixeGetCall), [*insert*](api::PublicAdvertisedPrefixeInsertCall), [*list*](api::PublicAdvertisedPrefixeListCall) and [*patch*](api::PublicAdvertisedPrefixePatchCall)
-//! * public delegated prefixes
-//!  * [*aggregated list*](api::PublicDelegatedPrefixeAggregatedListCall), [*delete*](api::PublicDelegatedPrefixeDeleteCall), [*get*](api::PublicDelegatedPrefixeGetCall), [*insert*](api::PublicDelegatedPrefixeInsertCall), [*list*](api::PublicDelegatedPrefixeListCall) and [*patch*](api::PublicDelegatedPrefixePatchCall)
+//! * [public advertised prefixes](api::PublicAdvertisedPrefix)
+//!  * [*delete*](api::PublicAdvertisedPrefixDeleteCall), [*get*](api::PublicAdvertisedPrefixGetCall), [*insert*](api::PublicAdvertisedPrefixInsertCall), [*list*](api::PublicAdvertisedPrefixListCall) and [*patch*](api::PublicAdvertisedPrefixPatchCall)
+//! * [public delegated prefixes](api::PublicDelegatedPrefix)
+//!  * [*aggregated list*](api::PublicDelegatedPrefixAggregatedListCall), [*delete*](api::PublicDelegatedPrefixDeleteCall), [*get*](api::PublicDelegatedPrefixGetCall), [*insert*](api::PublicDelegatedPrefixInsertCall), [*list*](api::PublicDelegatedPrefixListCall) and [*patch*](api::PublicDelegatedPrefixPatchCall)
 //! * region autoscalers
 //!  * [*delete*](api::RegionAutoscalerDeleteCall), [*get*](api::RegionAutoscalerGetCall), [*insert*](api::RegionAutoscalerInsertCall), [*list*](api::RegionAutoscalerListCall), [*patch*](api::RegionAutoscalerPatchCall) and [*update*](api::RegionAutoscalerUpdateCall)
 //! * region backend services
@@ -587,7 +587,7 @@
 //! use compute1::{Result, Error};
 //! # async fn dox() {
 //! use std::default::Default;
-//! use compute1::{Compute, oauth2, hyper, hyper_rustls};
+//! use compute1::{Compute, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 //! 
 //! // Get an ApplicationSecret instance by some means. It contains the `client_id` and 
 //! // `client_secret`, among other things.
@@ -699,22 +699,17 @@
 // This file was generated automatically from 'src/generator/templates/api/lib.rs.mako'
 // DO NOT EDIT !
 
-#[macro_use]
-extern crate serde_derive;
-
 // Re-export the hyper and hyper_rustls crate, they are required to build the hub
-pub extern crate hyper;
-pub extern crate hyper_rustls;
-extern crate serde;
-extern crate serde_json;
-// Re-export the yup_oauth2 crate, that is required to call some methods of the hub and the client
-pub extern crate yup_oauth2 as oauth2;
-extern crate mime;
-extern crate url;
-
+pub use hyper;
+pub use hyper_rustls;
+pub extern crate google_apis_common as client;
+pub use client::chrono;
 pub mod api;
-pub mod client;
 
 // Re-export the hub type and some basic client structs
 pub use api::Compute;
-pub use client::{Result, Error, Delegate};
+pub use client::{Result, Error, Delegate, FieldMask};
+
+// Re-export the yup_oauth2 crate, that is required to call some methods of the hub and the client
+#[cfg(feature = "yup-oauth2")]
+pub use client::oauth2;

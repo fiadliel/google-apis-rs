@@ -3,8 +3,6 @@
 // DO NOT EDIT !
 #![allow(unused_variables, unused_imports, dead_code, unused_mut)]
 
-extern crate tokio;
-
 #[macro_use]
 extern crate clap;
 
@@ -12,9 +10,10 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_cloudasset1::{api, Error, oauth2};
+use google_cloudasset1::{api, Error, oauth2, client::chrono, FieldMask};
 
-mod client;
+
+use google_clis_common as client;
 
 use client::{InvalidOptionsError, CLIError, arg_from_str, writer_from_opts, parse_kv_arg,
           input_file_from_opts, input_mime_from_opts, FieldCursor, FieldError, CallType, UploadProtocol,
@@ -61,13 +60,13 @@ where
                     call = call.add_relationship_types(value.unwrap_or(""));
                 },
                 "read-time" => {
-                    call = call.read_time(value.unwrap_or(""));
+                    call = call.read_time(        value.map(|v| arg_from_str(v, err, "read-time", "google-datetime")).unwrap_or(chrono::Utc::now()));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "content-type" => {
                     call = call.content_type(value.unwrap_or(""));
@@ -534,34 +533,34 @@ where
                     call = call.saved_analysis_query(value.unwrap_or(""));
                 },
                 "execution-timeout" => {
-                    call = call.execution_timeout(value.unwrap_or(""));
+                    call = call.execution_timeout(        value.map(|v| arg_from_str(v, err, "execution-timeout", "google-duration")).unwrap_or(chrono::Duration::seconds(0)));
                 },
                 "analysis-query-resource-selector-full-resource-name" => {
                     call = call.analysis_query_resource_selector_full_resource_name(value.unwrap_or(""));
                 },
                 "analysis-query-options-output-resource-edges" => {
-                    call = call.analysis_query_options_output_resource_edges(arg_from_str(value.unwrap_or("false"), err, "analysis-query-options-output-resource-edges", "boolean"));
+                    call = call.analysis_query_options_output_resource_edges(        value.map(|v| arg_from_str(v, err, "analysis-query-options-output-resource-edges", "boolean")).unwrap_or(false));
                 },
                 "analysis-query-options-output-group-edges" => {
-                    call = call.analysis_query_options_output_group_edges(arg_from_str(value.unwrap_or("false"), err, "analysis-query-options-output-group-edges", "boolean"));
+                    call = call.analysis_query_options_output_group_edges(        value.map(|v| arg_from_str(v, err, "analysis-query-options-output-group-edges", "boolean")).unwrap_or(false));
                 },
                 "analysis-query-options-expand-roles" => {
-                    call = call.analysis_query_options_expand_roles(arg_from_str(value.unwrap_or("false"), err, "analysis-query-options-expand-roles", "boolean"));
+                    call = call.analysis_query_options_expand_roles(        value.map(|v| arg_from_str(v, err, "analysis-query-options-expand-roles", "boolean")).unwrap_or(false));
                 },
                 "analysis-query-options-expand-resources" => {
-                    call = call.analysis_query_options_expand_resources(arg_from_str(value.unwrap_or("false"), err, "analysis-query-options-expand-resources", "boolean"));
+                    call = call.analysis_query_options_expand_resources(        value.map(|v| arg_from_str(v, err, "analysis-query-options-expand-resources", "boolean")).unwrap_or(false));
                 },
                 "analysis-query-options-expand-groups" => {
-                    call = call.analysis_query_options_expand_groups(arg_from_str(value.unwrap_or("false"), err, "analysis-query-options-expand-groups", "boolean"));
+                    call = call.analysis_query_options_expand_groups(        value.map(|v| arg_from_str(v, err, "analysis-query-options-expand-groups", "boolean")).unwrap_or(false));
                 },
                 "analysis-query-options-analyze-service-account-impersonation" => {
-                    call = call.analysis_query_options_analyze_service_account_impersonation(arg_from_str(value.unwrap_or("false"), err, "analysis-query-options-analyze-service-account-impersonation", "boolean"));
+                    call = call.analysis_query_options_analyze_service_account_impersonation(        value.map(|v| arg_from_str(v, err, "analysis-query-options-analyze-service-account-impersonation", "boolean")).unwrap_or(false));
                 },
                 "analysis-query-identity-selector-identity" => {
                     call = call.analysis_query_identity_selector_identity(value.unwrap_or(""));
                 },
                 "analysis-query-condition-context-access-time" => {
-                    call = call.analysis_query_condition_context_access_time(value.unwrap_or(""));
+                    call = call.analysis_query_condition_context_access_time(        value.map(|v| arg_from_str(v, err, "analysis-query-condition-context-access-time", "google-datetime")).unwrap_or(chrono::Utc::now()));
                 },
                 "analysis-query-access-selector-roles" => {
                     call = call.add_analysis_query_access_selector_roles(value.unwrap_or(""));
@@ -787,10 +786,10 @@ where
                     call = call.add_relationship_types(value.unwrap_or(""));
                 },
                 "read-time-window-start-time" => {
-                    call = call.read_time_window_start_time(value.unwrap_or(""));
+                    call = call.read_time_window_start_time(        value.map(|v| arg_from_str(v, err, "read-time-window-start-time", "google-datetime")).unwrap_or(chrono::Utc::now()));
                 },
                 "read-time-window-end-time" => {
-                    call = call.read_time_window_end_time(value.unwrap_or(""));
+                    call = call.read_time_window_end_time(        value.map(|v| arg_from_str(v, err, "read-time-window-end-time", "google-datetime")).unwrap_or(chrono::Utc::now()));
                 },
                 "content-type" => {
                     call = call.content_type(value.unwrap_or(""));
@@ -953,7 +952,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "order-by" => {
                     call = call.order_by(value.unwrap_or(""));
@@ -1015,7 +1014,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "read-mask" => {
-                    call = call.read_mask(value.unwrap_or(""));
+                    call = call.read_mask(        value.map(|v| arg_from_str(v, err, "read-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "query" => {
                     call = call.query(value.unwrap_or(""));
@@ -1024,7 +1023,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "order-by" => {
                     call = call.order_by(value.unwrap_or(""));
@@ -1352,7 +1351,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -1462,7 +1461,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -2195,7 +2194,7 @@ async fn main() {
     
     let mut app = App::new("cloudasset1")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.1+20220225")
+           .version("5.0.2-beta-1+20220225")
            .about("The cloud asset API manages the history and inventory of cloud resources.")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_cloudasset1_cli")
            .arg(Arg::with_name("url")

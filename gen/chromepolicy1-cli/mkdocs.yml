@@ -1,4 +1,4 @@
-site_name: Chrome Policy v4.0.1+20220305
+site_name: Chrome Policy v5.0.2-beta-1+20220305
 site_url: http://byron.github.io/google-apis-rs/google-chromepolicy1-cli
 site_description: A complete library to interact with Chrome Policy (protocol v1)
 
@@ -7,14 +7,16 @@ repo_url: https://github.com/Byron/google-apis-rs/tree/main/gen/chromepolicy1-cl
 docs_dir: docs
 site_dir: build_html
 
-pages:
-- ['index.md', 'Home']
-- ['customers_policies-orgunits-batch-inherit.md', 'Customers', 'Policies Orgunits Batch Inherit']
-- ['customers_policies-orgunits-batch-modify.md', 'Customers', 'Policies Orgunits Batch Modify']
-- ['customers_policies-resolve.md', 'Customers', 'Policies Resolve']
-- ['customers_policy-schemas-get.md', 'Customers', 'Policy Schemas Get']
-- ['customers_policy-schemas-list.md', 'Customers', 'Policy Schemas List']
-- ['media_upload.md', 'Media', 'Upload']
+nav:
+- Home: 'index.md'
+- 'Customers':
+    - 'Policies Orgunits Batch Inherit': 'customers_policies-orgunits-batch-inherit.md'
+    - 'Policies Orgunits Batch Modify': 'customers_policies-orgunits-batch-modify.md'
+    - 'Policies Resolve': 'customers_policies-resolve.md'
+    - 'Policy Schemas Get': 'customers_policy-schemas-get.md'
+    - 'Policy Schemas List': 'customers_policy-schemas-list.md'
+- 'Media':
+    - 'Upload': 'media_upload.md'
 
 theme: readthedocs
 
