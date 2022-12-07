@@ -10,7 +10,8 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_walletobjects1::{api, Error, oauth2};
+use google_walletobjects1::{api, Error, oauth2, client::chrono, FieldMask};
+
 
 use google_clis_common as client;
 
@@ -410,10 +411,10 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "issuer-id" => {
-                    call = call.issuer_id(value.unwrap_or(""));
+                    call = call.issuer_id(        value.map(|v| arg_from_str(v, err, "issuer-id", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -1377,7 +1378,7 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "class-id" => {
                     call = call.class_id(value.unwrap_or(""));
@@ -2612,10 +2613,10 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "issuer-id" => {
-                    call = call.issuer_id(value.unwrap_or(""));
+                    call = call.issuer_id(        value.map(|v| arg_from_str(v, err, "issuer-id", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -3671,7 +3672,7 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "class-id" => {
                     call = call.class_id(value.unwrap_or(""));
@@ -4668,10 +4669,10 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "issuer-id" => {
-                    call = call.issuer_id(value.unwrap_or(""));
+                    call = call.issuer_id(        value.map(|v| arg_from_str(v, err, "issuer-id", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -5200,7 +5201,7 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "class-id" => {
                     call = call.class_id(value.unwrap_or(""));
@@ -6046,10 +6047,10 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "issuer-id" => {
-                    call = call.issuer_id(value.unwrap_or(""));
+                    call = call.issuer_id(        value.map(|v| arg_from_str(v, err, "issuer-id", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -6897,7 +6898,7 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "class-id" => {
                     call = call.class_id(value.unwrap_or(""));
@@ -8378,10 +8379,10 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "issuer-id" => {
-                    call = call.issuer_id(value.unwrap_or(""));
+                    call = call.issuer_id(        value.map(|v| arg_from_str(v, err, "issuer-id", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -9343,7 +9344,7 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "class-id" => {
                     call = call.class_id(value.unwrap_or(""));
@@ -10526,10 +10527,10 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "issuer-id" => {
-                    call = call.issuer_id(value.unwrap_or(""));
+                    call = call.issuer_id(        value.map(|v| arg_from_str(v, err, "issuer-id", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -11409,7 +11410,7 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "class-id" => {
                     call = call.class_id(value.unwrap_or(""));
@@ -12701,10 +12702,10 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "issuer-id" => {
-                    call = call.issuer_id(value.unwrap_or(""));
+                    call = call.issuer_id(        value.map(|v| arg_from_str(v, err, "issuer-id", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -13844,7 +13845,7 @@ where
                     call = call.token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "class-id" => {
                     call = call.class_id(value.unwrap_or(""));
@@ -17579,7 +17580,7 @@ async fn main() {
     
     let mut app = App::new("walletobjects1")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.4+20220928")
+           .version("5.0.2-beta-1+20220928")
            .about("API for issuers to save and manage Google Wallet Objects.")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_walletobjects1_cli")
            .arg(Arg::with_name("url")

@@ -3,8 +3,6 @@
 // DO NOT EDIT !
 #![allow(unused_variables, unused_imports, dead_code, unused_mut)]
 
-extern crate tokio;
-
 #[macro_use]
 extern crate clap;
 
@@ -12,9 +10,10 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_vmmigration1::{api, Error, oauth2};
+use google_vmmigration1::{api, Error, oauth2, client::chrono, FieldMask};
 
-mod client;
+
+use google_clis_common as client;
 
 use client::{InvalidOptionsError, CLIError, arg_from_str, writer_from_opts, parse_kv_arg,
           input_file_from_opts, input_mime_from_opts, FieldCursor, FieldError, CallType, UploadProtocol,
@@ -402,7 +401,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "order-by" => {
                     call = call.order_by(value.unwrap_or(""));
@@ -501,7 +500,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "request-id" => {
                     call = call.request_id(value.unwrap_or(""));
@@ -648,7 +647,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -898,7 +897,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -1286,7 +1285,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "order-by" => {
                     call = call.order_by(value.unwrap_or(""));
@@ -1489,7 +1488,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "force-refresh" => {
-                    call = call.force_refresh(arg_from_str(value.unwrap_or("false"), err, "force-refresh", "boolean"));
+                    call = call.force_refresh(        value.map(|v| arg_from_str(v, err, "force-refresh", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -1600,7 +1599,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "order-by" => {
                     call = call.order_by(value.unwrap_or(""));
@@ -1917,7 +1916,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "order-by" => {
                     call = call.order_by(value.unwrap_or(""));
@@ -2363,7 +2362,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "order-by" => {
                     call = call.order_by(value.unwrap_or(""));
@@ -2623,7 +2622,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "order-by" => {
                     call = call.order_by(value.unwrap_or(""));
@@ -2753,7 +2752,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "request-id" => {
                     call = call.request_id(value.unwrap_or(""));
@@ -3105,7 +3104,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "request-id" => {
                     call = call.request_id(value.unwrap_or(""));
@@ -3383,7 +3382,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "order-by" => {
                     call = call.order_by(value.unwrap_or(""));
@@ -3652,7 +3651,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "order-by" => {
                     call = call.order_by(value.unwrap_or(""));
@@ -3751,7 +3750,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "request-id" => {
                     call = call.request_id(value.unwrap_or(""));
@@ -5278,7 +5277,7 @@ async fn main() {
     
     let mut app = App::new("vmmigration1")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.1+20220225")
+           .version("5.0.2-beta-1+20220225")
            .about("Use the Migrate for Compute Engine API to programmatically migrate workloads. ")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_vmmigration1_cli")
            .arg(Arg::with_name("url")

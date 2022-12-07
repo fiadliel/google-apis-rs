@@ -25,7 +25,7 @@ Find the source code [on github](https://github.com/Byron/google-apis-rs/tree/ma
 
 # Usage
 
-This documentation was generated from the *Walletobjects* API at revision *20220928*. The CLI is at version *4.0.4*.
+This documentation was generated from the *Walletobjects* API at revision *20220928*. The CLI is at version *5.0.2-beta-1*.
 
 ```bash
 walletobjects1 [options]

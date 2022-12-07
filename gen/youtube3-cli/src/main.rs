@@ -3,8 +3,6 @@
 // DO NOT EDIT !
 #![allow(unused_variables, unused_imports, dead_code, unused_mut)]
 
-extern crate tokio;
-
 #[macro_use]
 extern crate clap;
 
@@ -12,9 +10,10 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_youtube3::{api, Error, oauth2};
+use google_youtube3::{api, Error, oauth2, client::chrono, FieldMask};
 
-mod client;
+
+use google_clis_common as client;
 
 use client::{InvalidOptionsError, CLIError, arg_from_str, writer_from_opts, parse_kv_arg,
           input_file_from_opts, input_mime_from_opts, FieldCursor, FieldError, CallType, UploadProtocol,
@@ -149,22 +148,22 @@ where
                     call = call.region_code(value.unwrap_or(""));
                 },
                 "published-before" => {
-                    call = call.published_before(value.unwrap_or(""));
+                    call = call.published_before(        value.map(|v| arg_from_str(v, err, "published-before", "google-datetime")).unwrap_or(chrono::Utc::now()));
                 },
                 "published-after" => {
-                    call = call.published_after(value.unwrap_or(""));
+                    call = call.published_after(        value.map(|v| arg_from_str(v, err, "published-after", "google-datetime")).unwrap_or(chrono::Utc::now()));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "mine" => {
-                    call = call.mine(arg_from_str(value.unwrap_or("false"), err, "mine", "boolean"));
+                    call = call.mine(        value.map(|v| arg_from_str(v, err, "mine", "boolean")).unwrap_or(false));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "home" => {
-                    call = call.home(arg_from_str(value.unwrap_or("false"), err, "home", "boolean"));
+                    call = call.home(        value.map(|v| arg_from_str(v, err, "home", "boolean")).unwrap_or(false));
                 },
                 "channel-id" => {
                     call = call.channel_id(value.unwrap_or(""));
@@ -393,7 +392,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "sync" => {
-                    call = call.sync(arg_from_str(value.unwrap_or("false"), err, "sync", "boolean"));
+                    call = call.sync(        value.map(|v| arg_from_str(v, err, "sync", "boolean")).unwrap_or(false));
                 },
                 "on-behalf-of-content-owner" => {
                     call = call.on_behalf_of_content_owner(value.unwrap_or(""));
@@ -568,7 +567,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "sync" => {
-                    call = call.sync(arg_from_str(value.unwrap_or("false"), err, "sync", "boolean"));
+                    call = call.sync(        value.map(|v| arg_from_str(v, err, "sync", "boolean")).unwrap_or(false));
                 },
                 "on-behalf-of-content-owner" => {
                     call = call.on_behalf_of_content_owner(value.unwrap_or(""));
@@ -890,7 +889,7 @@ where
                     call = call.on_behalf_of_content_owner(value.unwrap_or(""));
                 },
                 "mine" => {
-                    call = call.mine(arg_from_str(value.unwrap_or("false"), err, "mine", "boolean"));
+                    call = call.mine(        value.map(|v| arg_from_str(v, err, "mine", "boolean")).unwrap_or(false));
                 },
                 "id" => {
                     call = call.add_id(value.unwrap_or(""));
@@ -1064,16 +1063,16 @@ where
                     call = call.on_behalf_of_content_owner(value.unwrap_or(""));
                 },
                 "my-subscribers" => {
-                    call = call.my_subscribers(arg_from_str(value.unwrap_or("false"), err, "my-subscribers", "boolean"));
+                    call = call.my_subscribers(        value.map(|v| arg_from_str(v, err, "my-subscribers", "boolean")).unwrap_or(false));
                 },
                 "mine" => {
-                    call = call.mine(arg_from_str(value.unwrap_or("false"), err, "mine", "boolean"));
+                    call = call.mine(        value.map(|v| arg_from_str(v, err, "mine", "boolean")).unwrap_or(false));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "managed-by-me" => {
-                    call = call.managed_by_me(arg_from_str(value.unwrap_or("false"), err, "managed-by-me", "boolean"));
+                    call = call.managed_by_me(        value.map(|v| arg_from_str(v, err, "managed-by-me", "boolean")).unwrap_or(false));
                 },
                 "id" => {
                     call = call.add_id(value.unwrap_or(""));
@@ -1449,7 +1448,7 @@ where
                     call = call.moderation_status(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "id" => {
                     call = call.add_id(value.unwrap_or(""));
@@ -1669,7 +1668,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "id" => {
                     call = call.add_id(value.unwrap_or(""));
@@ -1772,7 +1771,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "ban-author" => {
-                    call = call.ban_author(arg_from_str(value.unwrap_or("false"), err, "ban-author", "boolean"));
+                    call = call.ban_author(        value.map(|v| arg_from_str(v, err, "ban-author", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -2301,10 +2300,10 @@ where
                     call = call.on_behalf_of_content_owner(value.unwrap_or(""));
                 },
                 "mine" => {
-                    call = call.mine(arg_from_str(value.unwrap_or("false"), err, "mine", "boolean"));
+                    call = call.mine(        value.map(|v| arg_from_str(v, err, "mine", "boolean")).unwrap_or(false));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "id" => {
                     call = call.add_id(value.unwrap_or(""));
@@ -2886,13 +2885,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "profile-image-size" => {
-                    call = call.profile_image_size(arg_from_str(value.unwrap_or("-0"), err, "profile-image-size", "integer"));
+                    call = call.profile_image_size(        value.map(|v| arg_from_str(v, err, "profile-image-size", "uint32")).unwrap_or(0));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "hl" => {
                     call = call.hl(value.unwrap_or(""));
@@ -3090,7 +3089,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 _ => {
                     let mut found = false;
@@ -3319,10 +3318,10 @@ where
                     call = call.on_behalf_of_content_owner(value.unwrap_or(""));
                 },
                 "mine" => {
-                    call = call.mine(arg_from_str(value.unwrap_or("false"), err, "mine", "boolean"));
+                    call = call.mine(        value.map(|v| arg_from_str(v, err, "mine", "boolean")).unwrap_or(false));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "id" => {
                     call = call.add_id(value.unwrap_or(""));
@@ -3500,7 +3499,7 @@ where
                     call = call.mode(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "has-access-to-level" => {
                     call = call.has_access_to_level(value.unwrap_or(""));
@@ -3799,7 +3798,7 @@ where
                     call = call.on_behalf_of_content_owner(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "id" => {
                     call = call.add_id(value.unwrap_or(""));
@@ -4162,10 +4161,10 @@ where
                     call = call.on_behalf_of_content_owner(value.unwrap_or(""));
                 },
                 "mine" => {
-                    call = call.mine(arg_from_str(value.unwrap_or("false"), err, "mine", "boolean"));
+                    call = call.mine(        value.map(|v| arg_from_str(v, err, "mine", "boolean")).unwrap_or(false));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "id" => {
                     call = call.add_id(value.unwrap_or(""));
@@ -4397,10 +4396,10 @@ where
                     call = call.q(value.unwrap_or(""));
                 },
                 "published-before" => {
-                    call = call.published_before(value.unwrap_or(""));
+                    call = call.published_before(        value.map(|v| arg_from_str(v, err, "published-before", "google-datetime")).unwrap_or(chrono::Utc::now()));
                 },
                 "published-after" => {
-                    call = call.published_after(value.unwrap_or(""));
+                    call = call.published_after(        value.map(|v| arg_from_str(v, err, "published-after", "google-datetime")).unwrap_or(chrono::Utc::now()));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
@@ -4412,7 +4411,7 @@ where
                     call = call.on_behalf_of_content_owner(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "location-radius" => {
                     call = call.location_radius(value.unwrap_or(""));
@@ -4421,13 +4420,13 @@ where
                     call = call.location(value.unwrap_or(""));
                 },
                 "for-mine" => {
-                    call = call.for_mine(arg_from_str(value.unwrap_or("false"), err, "for-mine", "boolean"));
+                    call = call.for_mine(        value.map(|v| arg_from_str(v, err, "for-mine", "boolean")).unwrap_or(false));
                 },
                 "for-developer" => {
-                    call = call.for_developer(arg_from_str(value.unwrap_or("false"), err, "for-developer", "boolean"));
+                    call = call.for_developer(        value.map(|v| arg_from_str(v, err, "for-developer", "boolean")).unwrap_or(false));
                 },
                 "for-content-owner" => {
-                    call = call.for_content_owner(arg_from_str(value.unwrap_or("false"), err, "for-content-owner", "boolean"));
+                    call = call.for_content_owner(        value.map(|v| arg_from_str(v, err, "for-content-owner", "boolean")).unwrap_or(false));
                 },
                 "event-type" => {
                     call = call.event_type(value.unwrap_or(""));
@@ -4680,16 +4679,16 @@ where
                     call = call.on_behalf_of_content_owner(value.unwrap_or(""));
                 },
                 "my-subscribers" => {
-                    call = call.my_subscribers(arg_from_str(value.unwrap_or("false"), err, "my-subscribers", "boolean"));
+                    call = call.my_subscribers(        value.map(|v| arg_from_str(v, err, "my-subscribers", "boolean")).unwrap_or(false));
                 },
                 "my-recent-subscribers" => {
-                    call = call.my_recent_subscribers(arg_from_str(value.unwrap_or("false"), err, "my-recent-subscribers", "boolean"));
+                    call = call.my_recent_subscribers(        value.map(|v| arg_from_str(v, err, "my-recent-subscribers", "boolean")).unwrap_or(false));
                 },
                 "mine" => {
-                    call = call.mine(arg_from_str(value.unwrap_or("false"), err, "mine", "boolean"));
+                    call = call.mine(        value.map(|v| arg_from_str(v, err, "mine", "boolean")).unwrap_or(false));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "id" => {
                     call = call.add_id(value.unwrap_or(""));
@@ -4757,7 +4756,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "hl" => {
                     call = call.hl(value.unwrap_or(""));
@@ -5681,7 +5680,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "stabilize" => {
-                    call = call.stabilize(arg_from_str(value.unwrap_or("false"), err, "stabilize", "boolean"));
+                    call = call.stabilize(        value.map(|v| arg_from_str(v, err, "stabilize", "boolean")).unwrap_or(false));
                 },
                 "on-behalf-of-content-owner-channel" => {
                     call = call.on_behalf_of_content_owner_channel(value.unwrap_or(""));
@@ -5690,10 +5689,10 @@ where
                     call = call.on_behalf_of_content_owner(value.unwrap_or(""));
                 },
                 "notify-subscribers" => {
-                    call = call.notify_subscribers(arg_from_str(value.unwrap_or("false"), err, "notify-subscribers", "boolean"));
+                    call = call.notify_subscribers(        value.map(|v| arg_from_str(v, err, "notify-subscribers", "boolean")).unwrap_or(false));
                 },
                 "auto-levels" => {
-                    call = call.auto_levels(arg_from_str(value.unwrap_or("false"), err, "auto-levels", "boolean"));
+                    call = call.auto_levels(        value.map(|v| arg_from_str(v, err, "auto-levels", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -5767,13 +5766,13 @@ where
                     call = call.my_rating(value.unwrap_or(""));
                 },
                 "max-width" => {
-                    call = call.max_width(arg_from_str(value.unwrap_or("-0"), err, "max-width", "integer"));
+                    call = call.max_width(        value.map(|v| arg_from_str(v, err, "max-width", "int32")).unwrap_or(-0));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "max-height" => {
-                    call = call.max_height(arg_from_str(value.unwrap_or("-0"), err, "max-height", "integer"));
+                    call = call.max_height(        value.map(|v| arg_from_str(v, err, "max-height", "int32")).unwrap_or(-0));
                 },
                 "locale" => {
                     call = call.locale(value.unwrap_or(""));
@@ -8755,7 +8754,7 @@ async fn main() {
     
     let mut app = App::new("youtube3")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.1+20220303")
+           .version("5.0.2-beta-1+20220303")
            .about("The YouTube Data API v3 is an API that provides access to YouTube data, such as videos, playlists, and channels.")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_youtube3_cli")
            .arg(Arg::with_name("url")
