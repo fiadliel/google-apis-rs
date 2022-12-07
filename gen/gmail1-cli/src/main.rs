@@ -3,8 +3,6 @@
 // DO NOT EDIT !
 #![allow(unused_variables, unused_imports, dead_code, unused_mut)]
 
-extern crate tokio;
-
 #[macro_use]
 extern crate clap;
 
@@ -12,9 +10,10 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_gmail1::{api, Error, oauth2};
+use google_gmail1::{api, Error, oauth2, client::chrono, FieldMask};
 
-mod client;
+
+use google_clis_common as client;
 
 use client::{InvalidOptionsError, CLIError, arg_from_str, writer_from_opts, parse_kv_arg,
           input_file_from_opts, input_mime_from_opts, FieldCursor, FieldError, CallType, UploadProtocol,
@@ -266,10 +265,10 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "include-spam-trash" => {
-                    call = call.include_spam_trash(arg_from_str(value.unwrap_or("false"), err, "include-spam-trash", "boolean"));
+                    call = call.include_spam_trash(        value.map(|v| arg_from_str(v, err, "include-spam-trash", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -581,13 +580,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "start-history-id" => {
-                    call = call.start_history_id(value.unwrap_or(""));
+                    call = call.start_history_id(        value.map(|v| arg_from_str(v, err, "start-history-id", "uint64")).unwrap_or(0));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "label-id" => {
                     call = call.label_id(value.unwrap_or(""));
@@ -1439,16 +1438,16 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "process-for-calendar" => {
-                    call = call.process_for_calendar(arg_from_str(value.unwrap_or("false"), err, "process-for-calendar", "boolean"));
+                    call = call.process_for_calendar(        value.map(|v| arg_from_str(v, err, "process-for-calendar", "boolean")).unwrap_or(false));
                 },
                 "never-mark-spam" => {
-                    call = call.never_mark_spam(arg_from_str(value.unwrap_or("false"), err, "never-mark-spam", "boolean"));
+                    call = call.never_mark_spam(        value.map(|v| arg_from_str(v, err, "never-mark-spam", "boolean")).unwrap_or(false));
                 },
                 "internal-date-source" => {
                     call = call.internal_date_source(value.unwrap_or(""));
                 },
                 "deleted" => {
-                    call = call.deleted(arg_from_str(value.unwrap_or("false"), err, "deleted", "boolean"));
+                    call = call.deleted(        value.map(|v| arg_from_str(v, err, "deleted", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -1556,7 +1555,7 @@ where
                     call = call.internal_date_source(value.unwrap_or(""));
                 },
                 "deleted" => {
-                    call = call.deleted(arg_from_str(value.unwrap_or("false"), err, "deleted", "boolean"));
+                    call = call.deleted(        value.map(|v| arg_from_str(v, err, "deleted", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -1621,13 +1620,13 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "label-ids" => {
                     call = call.add_label_ids(value.unwrap_or(""));
                 },
                 "include-spam-trash" => {
-                    call = call.include_spam_trash(arg_from_str(value.unwrap_or("false"), err, "include-spam-trash", "boolean"));
+                    call = call.include_spam_trash(        value.map(|v| arg_from_str(v, err, "include-spam-trash", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -4304,13 +4303,13 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "label-ids" => {
                     call = call.add_label_ids(value.unwrap_or(""));
                 },
                 "include-spam-trash" => {
-                    call = call.include_spam_trash(arg_from_str(value.unwrap_or("false"), err, "include-spam-trash", "boolean"));
+                    call = call.include_spam_trash(        value.map(|v| arg_from_str(v, err, "include-spam-trash", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -6766,7 +6765,7 @@ async fn main() {
     
     let mut app = App::new("gmail1")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.1+20220228")
+           .version("5.0.2-beta-1+20220228")
            .about("The Gmail API lets you view and manage Gmail mailbox data like threads, messages, and labels.")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_gmail1_cli")
            .arg(Arg::with_name("url")
