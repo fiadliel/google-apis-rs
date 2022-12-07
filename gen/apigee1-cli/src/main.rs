@@ -3,8 +3,6 @@
 // DO NOT EDIT !
 #![allow(unused_variables, unused_imports, dead_code, unused_mut)]
 
-extern crate tokio;
-
 #[macro_use]
 extern crate clap;
 
@@ -12,9 +10,10 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_apigee1::{api, Error, oauth2};
+use google_apigee1::{api, Error, oauth2, client::chrono, FieldMask};
 
-mod client;
+
+use google_clis_common as client;
 
 use client::{InvalidOptionsError, CLIError, arg_from_str, writer_from_opts, parse_kv_arg,
           input_file_from_opts, input_mime_from_opts, FieldCursor, FieldError, CallType, UploadProtocol,
@@ -1087,10 +1086,10 @@ where
                     call = call.start_key(value.unwrap_or(""));
                 },
                 "expand" => {
-                    call = call.expand(arg_from_str(value.unwrap_or("false"), err, "expand", "boolean"));
+                    call = call.expand(        value.map(|v| arg_from_str(v, err, "expand", "boolean")).unwrap_or(false));
                 },
                 "count" => {
-                    call = call.count(value.unwrap_or(""));
+                    call = call.count(        value.map(|v| arg_from_str(v, err, "count", "int64")).unwrap_or(-0));
                 },
                 "attributevalue" => {
                     call = call.attributevalue(value.unwrap_or(""));
@@ -1370,10 +1369,10 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "expand" => {
-                    call = call.expand(arg_from_str(value.unwrap_or("false"), err, "expand", "boolean"));
+                    call = call.expand(        value.map(|v| arg_from_str(v, err, "expand", "boolean")).unwrap_or(false));
                 },
                 "count" => {
-                    call = call.count(arg_from_str(value.unwrap_or("-0"), err, "count", "integer"));
+                    call = call.count(        value.map(|v| arg_from_str(v, err, "count", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -1667,7 +1666,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "validate" => {
-                    call = call.validate(arg_from_str(value.unwrap_or("false"), err, "validate", "boolean"));
+                    call = call.validate(        value.map(|v| arg_from_str(v, err, "validate", "boolean")).unwrap_or(false));
                 },
                 "name" => {
                     call = call.name(value.unwrap_or(""));
@@ -2023,10 +2022,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "include-revisions" => {
-                    call = call.include_revisions(arg_from_str(value.unwrap_or("false"), err, "include-revisions", "boolean"));
+                    call = call.include_revisions(        value.map(|v| arg_from_str(v, err, "include-revisions", "boolean")).unwrap_or(false));
                 },
                 "include-meta-data" => {
-                    call = call.include_meta_data(arg_from_str(value.unwrap_or("false"), err, "include-meta-data", "boolean"));
+                    call = call.include_meta_data(        value.map(|v| arg_from_str(v, err, "include-meta-data", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -2123,7 +2122,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -2373,7 +2372,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "validate" => {
-                    call = call.validate(arg_from_str(value.unwrap_or("false"), err, "validate", "boolean"));
+                    call = call.validate(        value.map(|v| arg_from_str(v, err, "validate", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -2487,19 +2486,19 @@ where
                     call = call.start_key(value.unwrap_or(""));
                 },
                 "rows" => {
-                    call = call.rows(value.unwrap_or(""));
+                    call = call.rows(        value.map(|v| arg_from_str(v, err, "rows", "int64")).unwrap_or(-0));
                 },
                 "key-status" => {
                     call = call.key_status(value.unwrap_or(""));
                 },
                 "include-cred" => {
-                    call = call.include_cred(arg_from_str(value.unwrap_or("false"), err, "include-cred", "boolean"));
+                    call = call.include_cred(        value.map(|v| arg_from_str(v, err, "include-cred", "boolean")).unwrap_or(false));
                 },
                 "ids" => {
                     call = call.ids(value.unwrap_or(""));
                 },
                 "expand" => {
-                    call = call.expand(arg_from_str(value.unwrap_or("false"), err, "expand", "boolean"));
+                    call = call.expand(        value.map(|v| arg_from_str(v, err, "expand", "boolean")).unwrap_or(false));
                 },
                 "apptype" => {
                     call = call.apptype(value.unwrap_or(""));
@@ -2874,7 +2873,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -2967,7 +2966,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -3075,7 +3074,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "shared-flows" => {
-                    call = call.shared_flows(arg_from_str(value.unwrap_or("false"), err, "shared-flows", "boolean"));
+                    call = call.shared_flows(        value.map(|v| arg_from_str(v, err, "shared-flows", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -4345,13 +4344,13 @@ where
                     call = call.start_key(value.unwrap_or(""));
                 },
                 "shallow-expand" => {
-                    call = call.shallow_expand(arg_from_str(value.unwrap_or("false"), err, "shallow-expand", "boolean"));
+                    call = call.shallow_expand(        value.map(|v| arg_from_str(v, err, "shallow-expand", "boolean")).unwrap_or(false));
                 },
                 "expand" => {
-                    call = call.expand(arg_from_str(value.unwrap_or("false"), err, "expand", "boolean"));
+                    call = call.expand(        value.map(|v| arg_from_str(v, err, "expand", "boolean")).unwrap_or(false));
                 },
                 "count" => {
-                    call = call.count(value.unwrap_or(""));
+                    call = call.count(        value.map(|v| arg_from_str(v, err, "count", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -5315,16 +5314,16 @@ where
                     call = call.start_key(value.unwrap_or(""));
                 },
                 "include-company" => {
-                    call = call.include_company(arg_from_str(value.unwrap_or("false"), err, "include-company", "boolean"));
+                    call = call.include_company(        value.map(|v| arg_from_str(v, err, "include-company", "boolean")).unwrap_or(false));
                 },
                 "ids" => {
                     call = call.ids(value.unwrap_or(""));
                 },
                 "expand" => {
-                    call = call.expand(arg_from_str(value.unwrap_or("false"), err, "expand", "boolean"));
+                    call = call.expand(        value.map(|v| arg_from_str(v, err, "expand", "boolean")).unwrap_or(false));
                 },
                 "count" => {
-                    call = call.count(value.unwrap_or(""));
+                    call = call.count(        value.map(|v| arg_from_str(v, err, "count", "int64")).unwrap_or(-0));
                 },
                 "app" => {
                     call = call.app(value.unwrap_or(""));
@@ -5668,7 +5667,7 @@ where
                     call = call.start_key(value.unwrap_or(""));
                 },
                 "count" => {
-                    call = call.count(arg_from_str(value.unwrap_or("-0"), err, "count", "integer"));
+                    call = call.count(        value.map(|v| arg_from_str(v, err, "count", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -6105,7 +6104,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -6355,7 +6354,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -6611,7 +6610,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -6704,7 +6703,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -6763,7 +6762,7 @@ where
                     call = call.type_(value.unwrap_or(""));
                 },
                 "disable-cache" => {
-                    call = call.disable_cache(arg_from_str(value.unwrap_or("false"), err, "disable-cache", "boolean"));
+                    call = call.disable_cache(        value.map(|v| arg_from_str(v, err, "disable-cache", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -7105,7 +7104,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "timeout" => {
-                    call = call.timeout(value.unwrap_or(""));
+                    call = call.timeout(        value.map(|v| arg_from_str(v, err, "timeout", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -7320,7 +7319,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -7379,10 +7378,10 @@ where
                     call = call.service_account(value.unwrap_or(""));
                 },
                 "sequenced-rollout" => {
-                    call = call.sequenced_rollout(arg_from_str(value.unwrap_or("false"), err, "sequenced-rollout", "boolean"));
+                    call = call.sequenced_rollout(        value.map(|v| arg_from_str(v, err, "sequenced-rollout", "boolean")).unwrap_or(false));
                 },
                 "override" => {
-                    call = call.override_(arg_from_str(value.unwrap_or("false"), err, "override", "boolean"));
+                    call = call.override_(        value.map(|v| arg_from_str(v, err, "override", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -7438,7 +7437,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "override" => {
-                    call = call.override_(arg_from_str(value.unwrap_or("false"), err, "override", "boolean"));
+                    call = call.override_(        value.map(|v| arg_from_str(v, err, "override", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -7598,7 +7597,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "sequenced-rollout" => {
-                    call = call.sequenced_rollout(arg_from_str(value.unwrap_or("false"), err, "sequenced-rollout", "boolean"));
+                    call = call.sequenced_rollout(        value.map(|v| arg_from_str(v, err, "sequenced-rollout", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -8019,7 +8018,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -8116,7 +8115,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -8372,7 +8371,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "shared-flows" => {
-                    call = call.shared_flows(arg_from_str(value.unwrap_or("false"), err, "shared-flows", "boolean"));
+                    call = call.shared_flows(        value.map(|v| arg_from_str(v, err, "shared-flows", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -8776,7 +8775,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "options-requested-policy-version" => {
-                    call = call.options_requested_policy_version(arg_from_str(value.unwrap_or("-0"), err, "options-requested-policy-version", "integer"));
+                    call = call.options_requested_policy_version(        value.map(|v| arg_from_str(v, err, "options-requested-policy-version", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -8918,10 +8917,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "ignore-newline-validation" => {
-                    call = call.ignore_newline_validation(arg_from_str(value.unwrap_or("false"), err, "ignore-newline-validation", "boolean"));
+                    call = call.ignore_newline_validation(        value.map(|v| arg_from_str(v, err, "ignore-newline-validation", "boolean")).unwrap_or(false));
                 },
                 "ignore-expiry-validation" => {
-                    call = call.ignore_expiry_validation(arg_from_str(value.unwrap_or("false"), err, "ignore-expiry-validation", "boolean"));
+                    call = call.ignore_expiry_validation(        value.map(|v| arg_from_str(v, err, "ignore-expiry-validation", "boolean")).unwrap_or(false));
                 },
                 "format" => {
                     call = call.format(value.unwrap_or(""));
@@ -9228,10 +9227,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "ignore-newline-validation" => {
-                    call = call.ignore_newline_validation(arg_from_str(value.unwrap_or("false"), err, "ignore-newline-validation", "boolean"));
+                    call = call.ignore_newline_validation(        value.map(|v| arg_from_str(v, err, "ignore-newline-validation", "boolean")).unwrap_or(false));
                 },
                 "ignore-expiry-validation" => {
-                    call = call.ignore_expiry_validation(arg_from_str(value.unwrap_or("false"), err, "ignore-expiry-validation", "boolean"));
+                    call = call.ignore_expiry_validation(        value.map(|v| arg_from_str(v, err, "ignore-expiry-validation", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -9622,7 +9621,7 @@ where
                     call = call.tzo(value.unwrap_or(""));
                 },
                 "ts-ascending" => {
-                    call = call.ts_ascending(arg_from_str(value.unwrap_or("false"), err, "ts-ascending", "boolean"));
+                    call = call.ts_ascending(        value.map(|v| arg_from_str(v, err, "ts-ascending", "boolean")).unwrap_or(false));
                 },
                 "topk" => {
                     call = call.topk(value.unwrap_or(""));
@@ -9640,13 +9639,13 @@ where
                     call = call.sort(value.unwrap_or(""));
                 },
                 "sonar" => {
-                    call = call.sonar(arg_from_str(value.unwrap_or("false"), err, "sonar", "boolean"));
+                    call = call.sonar(        value.map(|v| arg_from_str(v, err, "sonar", "boolean")).unwrap_or(false));
                 },
                 "select" => {
                     call = call.select(value.unwrap_or(""));
                 },
                 "realtime" => {
-                    call = call.realtime(arg_from_str(value.unwrap_or("false"), err, "realtime", "boolean"));
+                    call = call.realtime(        value.map(|v| arg_from_str(v, err, "realtime", "boolean")).unwrap_or(false));
                 },
                 "offset" => {
                     call = call.offset(value.unwrap_or(""));
@@ -10798,7 +10797,7 @@ where
                     call = call.service_account(value.unwrap_or(""));
                 },
                 "override" => {
-                    call = call.override_(arg_from_str(value.unwrap_or("false"), err, "override", "boolean"));
+                    call = call.override_(        value.map(|v| arg_from_str(v, err, "override", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -10961,7 +10960,7 @@ where
                     call = call.tzo(value.unwrap_or(""));
                 },
                 "ts-ascending" => {
-                    call = call.ts_ascending(arg_from_str(value.unwrap_or("false"), err, "ts-ascending", "boolean"));
+                    call = call.ts_ascending(        value.map(|v| arg_from_str(v, err, "ts-ascending", "boolean")).unwrap_or(false));
                 },
                 "topk" => {
                     call = call.topk(value.unwrap_or(""));
@@ -10979,13 +10978,13 @@ where
                     call = call.sort(value.unwrap_or(""));
                 },
                 "sonar" => {
-                    call = call.sonar(arg_from_str(value.unwrap_or("false"), err, "sonar", "boolean"));
+                    call = call.sonar(        value.map(|v| arg_from_str(v, err, "sonar", "boolean")).unwrap_or(false));
                 },
                 "select" => {
                     call = call.select(value.unwrap_or(""));
                 },
                 "realtime" => {
-                    call = call.realtime(arg_from_str(value.unwrap_or("false"), err, "realtime", "boolean"));
+                    call = call.realtime(        value.map(|v| arg_from_str(v, err, "realtime", "boolean")).unwrap_or(false));
                 },
                 "offset" => {
                     call = call.offset(value.unwrap_or(""));
@@ -11696,7 +11695,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -11788,7 +11787,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -12062,10 +12061,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "replace-repeated-fields" => {
-                    call = call.replace_repeated_fields(arg_from_str(value.unwrap_or("false"), err, "replace-repeated-fields", "boolean"));
+                    call = call.replace_repeated_fields(        value.map(|v| arg_from_str(v, err, "replace-repeated-fields", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -12249,7 +12248,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -12875,7 +12874,7 @@ where
                     call = call.tzo(value.unwrap_or(""));
                 },
                 "ts-ascending" => {
-                    call = call.ts_ascending(arg_from_str(value.unwrap_or("false"), err, "ts-ascending", "boolean"));
+                    call = call.ts_ascending(        value.map(|v| arg_from_str(v, err, "ts-ascending", "boolean")).unwrap_or(false));
                 },
                 "topk" => {
                     call = call.topk(value.unwrap_or(""));
@@ -12896,7 +12895,7 @@ where
                     call = call.select(value.unwrap_or(""));
                 },
                 "realtime" => {
-                    call = call.realtime(arg_from_str(value.unwrap_or("false"), err, "realtime", "boolean"));
+                    call = call.realtime(        value.map(|v| arg_from_str(v, err, "realtime", "boolean")).unwrap_or(false));
                 },
                 "offset" => {
                     call = call.offset(value.unwrap_or(""));
@@ -13161,7 +13160,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -13568,7 +13567,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -13902,7 +13901,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -14003,7 +14002,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-mask" => {
-                    call = call.update_mask(value.unwrap_or(""));
+                    call = call.update_mask(        value.map(|v| arg_from_str(v, err, "update-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -14390,7 +14389,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -14452,7 +14451,7 @@ where
                     call = call.tzo(value.unwrap_or(""));
                 },
                 "ts-ascending" => {
-                    call = call.ts_ascending(arg_from_str(value.unwrap_or("false"), err, "ts-ascending", "boolean"));
+                    call = call.ts_ascending(        value.map(|v| arg_from_str(v, err, "ts-ascending", "boolean")).unwrap_or(false));
                 },
                 "topk" => {
                     call = call.topk(value.unwrap_or(""));
@@ -14473,7 +14472,7 @@ where
                     call = call.select(value.unwrap_or(""));
                 },
                 "realtime" => {
-                    call = call.realtime(arg_from_str(value.unwrap_or("false"), err, "realtime", "boolean"));
+                    call = call.realtime(        value.map(|v| arg_from_str(v, err, "realtime", "boolean")).unwrap_or(false));
                 },
                 "offset" => {
                     call = call.offset(value.unwrap_or(""));
@@ -14752,7 +14751,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "expand" => {
-                    call = call.expand(arg_from_str(value.unwrap_or("false"), err, "expand", "boolean"));
+                    call = call.expand(        value.map(|v| arg_from_str(v, err, "expand", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -15336,10 +15335,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "include-revisions" => {
-                    call = call.include_revisions(arg_from_str(value.unwrap_or("false"), err, "include-revisions", "boolean"));
+                    call = call.include_revisions(        value.map(|v| arg_from_str(v, err, "include-revisions", "boolean")).unwrap_or(false));
                 },
                 "include-meta-data" => {
-                    call = call.include_meta_data(arg_from_str(value.unwrap_or("false"), err, "include-meta-data", "boolean"));
+                    call = call.include_meta_data(        value.map(|v| arg_from_str(v, err, "include-meta-data", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -15589,7 +15588,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "validate" => {
-                    call = call.validate(arg_from_str(value.unwrap_or("false"), err, "validate", "boolean"));
+                    call = call.validate(        value.map(|v| arg_from_str(v, err, "validate", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -22683,7 +22682,7 @@ async fn main() {
     
     let mut app = App::new("apigee1")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.1+20220301")
+           .version("5.0.2-beta-1+20220301")
            .about("Use the Apigee API to programmatically develop and manage APIs with a set of RESTful operations. Develop and secure API proxies, deploy and undeploy API proxy revisions, monitor APIs, configure environments, manage users, and more. Note: This product is available as a free trial for a time period of 60 days.")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_apigee1_cli")
            .arg(Arg::with_name("url")
