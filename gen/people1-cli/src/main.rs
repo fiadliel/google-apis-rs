@@ -3,8 +3,6 @@
 // DO NOT EDIT !
 #![allow(unused_variables, unused_imports, dead_code, unused_mut)]
 
-extern crate tokio;
-
 #[macro_use]
 extern crate clap;
 
@@ -12,9 +10,10 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_people1::{api, Error, oauth2};
+use google_people1::{api, Error, oauth2, client::chrono, FieldMask};
 
-mod client;
+
+use google_clis_common as client;
 
 use client::{InvalidOptionsError, CLIError, arg_from_str, writer_from_opts, parse_kv_arg,
           input_file_from_opts, input_mime_from_opts, FieldCursor, FieldError, CallType, UploadProtocol,
@@ -61,10 +60,10 @@ where
                     call = call.add_resource_names(value.unwrap_or(""));
                 },
                 "max-members" => {
-                    call = call.max_members(arg_from_str(value.unwrap_or("-0"), err, "max-members", "integer"));
+                    call = call.max_members(        value.map(|v| arg_from_str(v, err, "max-members", "int32")).unwrap_or(-0));
                 },
                 "group-fields" => {
-                    call = call.group_fields(value.unwrap_or(""));
+                    call = call.group_fields(        value.map(|v| arg_from_str(v, err, "group-fields", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -214,7 +213,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "delete-contacts" => {
-                    call = call.delete_contacts(arg_from_str(value.unwrap_or("false"), err, "delete-contacts", "boolean"));
+                    call = call.delete_contacts(        value.map(|v| arg_from_str(v, err, "delete-contacts", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -270,10 +269,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "max-members" => {
-                    call = call.max_members(arg_from_str(value.unwrap_or("-0"), err, "max-members", "integer"));
+                    call = call.max_members(        value.map(|v| arg_from_str(v, err, "max-members", "int32")).unwrap_or(-0));
                 },
                 "group-fields" => {
-                    call = call.group_fields(value.unwrap_or(""));
+                    call = call.group_fields(        value.map(|v| arg_from_str(v, err, "group-fields", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -335,10 +334,10 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "group-fields" => {
-                    call = call.group_fields(value.unwrap_or(""));
+                    call = call.group_fields(        value.map(|v| arg_from_str(v, err, "group-fields", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -668,16 +667,16 @@ where
                     call = call.add_sources(value.unwrap_or(""));
                 },
                 "request-sync-token" => {
-                    call = call.request_sync_token(arg_from_str(value.unwrap_or("false"), err, "request-sync-token", "boolean"));
+                    call = call.request_sync_token(        value.map(|v| arg_from_str(v, err, "request-sync-token", "boolean")).unwrap_or(false));
                 },
                 "read-mask" => {
-                    call = call.read_mask(value.unwrap_or(""));
+                    call = call.read_mask(        value.map(|v| arg_from_str(v, err, "read-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -733,13 +732,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "read-mask" => {
-                    call = call.read_mask(value.unwrap_or(""));
+                    call = call.read_mask(        value.map(|v| arg_from_str(v, err, "read-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "query" => {
                     call = call.query(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -1062,19 +1061,19 @@ where
                     call = call.sort_order(value.unwrap_or(""));
                 },
                 "request-sync-token" => {
-                    call = call.request_sync_token(arg_from_str(value.unwrap_or("false"), err, "request-sync-token", "boolean"));
+                    call = call.request_sync_token(        value.map(|v| arg_from_str(v, err, "request-sync-token", "boolean")).unwrap_or(false));
                 },
                 "request-mask-include-field" => {
-                    call = call.request_mask_include_field(value.unwrap_or(""));
+                    call = call.request_mask_include_field(        value.map(|v| arg_from_str(v, err, "request-mask-include-field", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "person-fields" => {
-                    call = call.person_fields(value.unwrap_or(""));
+                    call = call.person_fields(        value.map(|v| arg_from_str(v, err, "person-fields", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -1172,7 +1171,7 @@ where
                     call = call.add_sources(value.unwrap_or(""));
                 },
                 "person-fields" => {
-                    call = call.person_fields(value.unwrap_or(""));
+                    call = call.person_fields(        value.map(|v| arg_from_str(v, err, "person-fields", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -1283,7 +1282,7 @@ where
                     call = call.add_sources(value.unwrap_or(""));
                 },
                 "person-fields" => {
-                    call = call.person_fields(value.unwrap_or(""));
+                    call = call.person_fields(        value.map(|v| arg_from_str(v, err, "person-fields", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -1342,10 +1341,10 @@ where
                     call = call.add_sources(value.unwrap_or(""));
                 },
                 "request-mask-include-field" => {
-                    call = call.request_mask_include_field(value.unwrap_or(""));
+                    call = call.request_mask_include_field(        value.map(|v| arg_from_str(v, err, "request-mask-include-field", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "person-fields" => {
-                    call = call.person_fields(value.unwrap_or(""));
+                    call = call.person_fields(        value.map(|v| arg_from_str(v, err, "person-fields", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -1407,10 +1406,10 @@ where
                     call = call.add_resource_names(value.unwrap_or(""));
                 },
                 "request-mask-include-field" => {
-                    call = call.request_mask_include_field(value.unwrap_or(""));
+                    call = call.request_mask_include_field(        value.map(|v| arg_from_str(v, err, "request-mask-include-field", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "person-fields" => {
-                    call = call.person_fields(value.unwrap_or(""));
+                    call = call.person_fields(        value.map(|v| arg_from_str(v, err, "person-fields", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -1472,16 +1471,16 @@ where
                     call = call.add_sources(value.unwrap_or(""));
                 },
                 "request-sync-token" => {
-                    call = call.request_sync_token(arg_from_str(value.unwrap_or("false"), err, "request-sync-token", "boolean"));
+                    call = call.request_sync_token(        value.map(|v| arg_from_str(v, err, "request-sync-token", "boolean")).unwrap_or(false));
                 },
                 "read-mask" => {
-                    call = call.read_mask(value.unwrap_or(""));
+                    call = call.read_mask(        value.map(|v| arg_from_str(v, err, "read-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "merge-sources" => {
                     call = call.add_merge_sources(value.unwrap_or(""));
@@ -1543,13 +1542,13 @@ where
                     call = call.add_sources(value.unwrap_or(""));
                 },
                 "read-mask" => {
-                    call = call.read_mask(value.unwrap_or(""));
+                    call = call.read_mask(        value.map(|v| arg_from_str(v, err, "read-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "query" => {
                     call = call.query(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -1608,7 +1607,7 @@ where
                     call = call.add_sources(value.unwrap_or(""));
                 },
                 "read-mask" => {
-                    call = call.read_mask(value.unwrap_or(""));
+                    call = call.read_mask(        value.map(|v| arg_from_str(v, err, "read-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "query" => {
                     call = call.query(value.unwrap_or(""));
@@ -1617,7 +1616,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 "merge-sources" => {
                     call = call.add_merge_sources(value.unwrap_or(""));
@@ -1715,13 +1714,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-person-fields" => {
-                    call = call.update_person_fields(value.unwrap_or(""));
+                    call = call.update_person_fields(        value.map(|v| arg_from_str(v, err, "update-person-fields", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "sources" => {
                     call = call.add_sources(value.unwrap_or(""));
                 },
                 "person-fields" => {
-                    call = call.person_fields(value.unwrap_or(""));
+                    call = call.person_fields(        value.map(|v| arg_from_str(v, err, "person-fields", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -2554,7 +2553,7 @@ async fn main() {
     
     let mut app = App::new("people1")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.1+20220303")
+           .version("5.0.2-beta-1+20220303")
            .about("Provides access to information about profiles and contacts.")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_people1_cli")
            .arg(Arg::with_name("url")
