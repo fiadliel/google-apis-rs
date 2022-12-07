@@ -3,8 +3,6 @@
 // DO NOT EDIT !
 #![allow(unused_variables, unused_imports, dead_code, unused_mut)]
 
-extern crate tokio;
-
 #[macro_use]
 extern crate clap;
 
@@ -12,9 +10,10 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_drive2::{api, Error, oauth2};
+use google_drive2::{api, Error, oauth2, client::chrono, FieldMask};
 
-mod client;
+
+use google_clis_common as client;
 
 use client::{InvalidOptionsError, CLIError, arg_from_str, writer_from_opts, parse_kv_arg,
           input_file_from_opts, input_mime_from_opts, FieldCursor, FieldError, CallType, UploadProtocol,
@@ -58,13 +57,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "start-change-id" => {
-                    call = call.start_change_id(value.unwrap_or(""));
+                    call = call.start_change_id(        value.map(|v| arg_from_str(v, err, "start-change-id", "int64")).unwrap_or(-0));
                 },
                 "max-change-id-count" => {
-                    call = call.max_change_id_count(value.unwrap_or(""));
+                    call = call.max_change_id_count(        value.map(|v| arg_from_str(v, err, "max-change-id-count", "int64")).unwrap_or(-0));
                 },
                 "include-subscribed" => {
-                    call = call.include_subscribed(arg_from_str(value.unwrap_or("false"), err, "include-subscribed", "boolean"));
+                    call = call.include_subscribed(        value.map(|v| arg_from_str(v, err, "include-subscribed", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -237,10 +236,10 @@ where
                     call = call.team_drive_id(value.unwrap_or(""));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "drive-id" => {
                     call = call.drive_id(value.unwrap_or(""));
@@ -302,10 +301,10 @@ where
                     call = call.team_drive_id(value.unwrap_or(""));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "drive-id" => {
                     call = call.drive_id(value.unwrap_or(""));
@@ -367,13 +366,13 @@ where
                     call = call.team_drive_id(value.unwrap_or(""));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "start-change-id" => {
-                    call = call.start_change_id(value.unwrap_or(""));
+                    call = call.start_change_id(        value.map(|v| arg_from_str(v, err, "start-change-id", "int64")).unwrap_or(-0));
                 },
                 "spaces" => {
                     call = call.spaces(value.unwrap_or(""));
@@ -382,25 +381,25 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "include-team-drive-items" => {
-                    call = call.include_team_drive_items(arg_from_str(value.unwrap_or("false"), err, "include-team-drive-items", "boolean"));
+                    call = call.include_team_drive_items(        value.map(|v| arg_from_str(v, err, "include-team-drive-items", "boolean")).unwrap_or(false));
                 },
                 "include-subscribed" => {
-                    call = call.include_subscribed(arg_from_str(value.unwrap_or("false"), err, "include-subscribed", "boolean"));
+                    call = call.include_subscribed(        value.map(|v| arg_from_str(v, err, "include-subscribed", "boolean")).unwrap_or(false));
                 },
                 "include-permissions-for-view" => {
                     call = call.include_permissions_for_view(value.unwrap_or(""));
                 },
                 "include-items-from-all-drives" => {
-                    call = call.include_items_from_all_drives(arg_from_str(value.unwrap_or("false"), err, "include-items-from-all-drives", "boolean"));
+                    call = call.include_items_from_all_drives(        value.map(|v| arg_from_str(v, err, "include-items-from-all-drives", "boolean")).unwrap_or(false));
                 },
                 "include-deleted" => {
-                    call = call.include_deleted(arg_from_str(value.unwrap_or("false"), err, "include-deleted", "boolean"));
+                    call = call.include_deleted(        value.map(|v| arg_from_str(v, err, "include-deleted", "boolean")).unwrap_or(false));
                 },
                 "include-corpus-removals" => {
-                    call = call.include_corpus_removals(arg_from_str(value.unwrap_or("false"), err, "include-corpus-removals", "boolean"));
+                    call = call.include_corpus_removals(        value.map(|v| arg_from_str(v, err, "include-corpus-removals", "boolean")).unwrap_or(false));
                 },
                 "drive-id" => {
                     call = call.drive_id(value.unwrap_or(""));
@@ -504,13 +503,13 @@ where
                     call = call.team_drive_id(value.unwrap_or(""));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "start-change-id" => {
-                    call = call.start_change_id(value.unwrap_or(""));
+                    call = call.start_change_id(        value.map(|v| arg_from_str(v, err, "start-change-id", "int64")).unwrap_or(-0));
                 },
                 "spaces" => {
                     call = call.spaces(value.unwrap_or(""));
@@ -519,25 +518,25 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "include-team-drive-items" => {
-                    call = call.include_team_drive_items(arg_from_str(value.unwrap_or("false"), err, "include-team-drive-items", "boolean"));
+                    call = call.include_team_drive_items(        value.map(|v| arg_from_str(v, err, "include-team-drive-items", "boolean")).unwrap_or(false));
                 },
                 "include-subscribed" => {
-                    call = call.include_subscribed(arg_from_str(value.unwrap_or("false"), err, "include-subscribed", "boolean"));
+                    call = call.include_subscribed(        value.map(|v| arg_from_str(v, err, "include-subscribed", "boolean")).unwrap_or(false));
                 },
                 "include-permissions-for-view" => {
                     call = call.include_permissions_for_view(value.unwrap_or(""));
                 },
                 "include-items-from-all-drives" => {
-                    call = call.include_items_from_all_drives(arg_from_str(value.unwrap_or("false"), err, "include-items-from-all-drives", "boolean"));
+                    call = call.include_items_from_all_drives(        value.map(|v| arg_from_str(v, err, "include-items-from-all-drives", "boolean")).unwrap_or(false));
                 },
                 "include-deleted" => {
-                    call = call.include_deleted(arg_from_str(value.unwrap_or("false"), err, "include-deleted", "boolean"));
+                    call = call.include_deleted(        value.map(|v| arg_from_str(v, err, "include-deleted", "boolean")).unwrap_or(false));
                 },
                 "include-corpus-removals" => {
-                    call = call.include_corpus_removals(arg_from_str(value.unwrap_or("false"), err, "include-corpus-removals", "boolean"));
+                    call = call.include_corpus_removals(        value.map(|v| arg_from_str(v, err, "include-corpus-removals", "boolean")).unwrap_or(false));
                 },
                 "drive-id" => {
                     call = call.drive_id(value.unwrap_or(""));
@@ -682,7 +681,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "enforce-single-parent" => {
-                    call = call.enforce_single_parent(arg_from_str(value.unwrap_or("false"), err, "enforce-single-parent", "boolean"));
+                    call = call.enforce_single_parent(        value.map(|v| arg_from_str(v, err, "enforce-single-parent", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -818,13 +817,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "enforce-single-parent" => {
-                    call = call.enforce_single_parent(arg_from_str(value.unwrap_or("false"), err, "enforce-single-parent", "boolean"));
+                    call = call.enforce_single_parent(        value.map(|v| arg_from_str(v, err, "enforce-single-parent", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -889,7 +888,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -989,7 +988,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "include-deleted" => {
-                    call = call.include_deleted(arg_from_str(value.unwrap_or("false"), err, "include-deleted", "boolean"));
+                    call = call.include_deleted(        value.map(|v| arg_from_str(v, err, "include-deleted", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -1155,10 +1154,10 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "include-deleted" => {
-                    call = call.include_deleted(arg_from_str(value.unwrap_or("false"), err, "include-deleted", "boolean"));
+                    call = call.include_deleted(        value.map(|v| arg_from_str(v, err, "include-deleted", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -1466,7 +1465,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-domain-admin-access" => {
-                    call = call.use_domain_admin_access(arg_from_str(value.unwrap_or("false"), err, "use-domain-admin-access", "boolean"));
+                    call = call.use_domain_admin_access(        value.map(|v| arg_from_str(v, err, "use-domain-admin-access", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -1693,7 +1692,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-domain-admin-access" => {
-                    call = call.use_domain_admin_access(arg_from_str(value.unwrap_or("false"), err, "use-domain-admin-access", "boolean"));
+                    call = call.use_domain_admin_access(        value.map(|v| arg_from_str(v, err, "use-domain-admin-access", "boolean")).unwrap_or(false));
                 },
                 "q" => {
                     call = call.q(value.unwrap_or(""));
@@ -1702,7 +1701,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -1877,7 +1876,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-domain-admin-access" => {
-                    call = call.use_domain_admin_access(arg_from_str(value.unwrap_or("false"), err, "use-domain-admin-access", "boolean"));
+                    call = call.use_domain_admin_access(        value.map(|v| arg_from_str(v, err, "use-domain-admin-access", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -2141,28 +2140,28 @@ where
                     call = call.timed_text_language(value.unwrap_or(""));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "pinned" => {
-                    call = call.pinned(arg_from_str(value.unwrap_or("false"), err, "pinned", "boolean"));
+                    call = call.pinned(        value.map(|v| arg_from_str(v, err, "pinned", "boolean")).unwrap_or(false));
                 },
                 "ocr-language" => {
                     call = call.ocr_language(value.unwrap_or(""));
                 },
                 "ocr" => {
-                    call = call.ocr(arg_from_str(value.unwrap_or("false"), err, "ocr", "boolean"));
+                    call = call.ocr(        value.map(|v| arg_from_str(v, err, "ocr", "boolean")).unwrap_or(false));
                 },
                 "include-permissions-for-view" => {
                     call = call.include_permissions_for_view(value.unwrap_or(""));
                 },
                 "enforce-single-parent" => {
-                    call = call.enforce_single_parent(arg_from_str(value.unwrap_or("false"), err, "enforce-single-parent", "boolean"));
+                    call = call.enforce_single_parent(        value.map(|v| arg_from_str(v, err, "enforce-single-parent", "boolean")).unwrap_or(false));
                 },
                 "convert" => {
-                    call = call.convert(arg_from_str(value.unwrap_or("false"), err, "convert", "boolean"));
+                    call = call.convert(        value.map(|v| arg_from_str(v, err, "convert", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -2218,13 +2217,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "enforce-single-parent" => {
-                    call = call.enforce_single_parent(arg_from_str(value.unwrap_or("false"), err, "enforce-single-parent", "boolean"));
+                    call = call.enforce_single_parent(        value.map(|v| arg_from_str(v, err, "enforce-single-parent", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -2272,7 +2271,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "enforce-single-parent" => {
-                    call = call.enforce_single_parent(arg_from_str(value.unwrap_or("false"), err, "enforce-single-parent", "boolean"));
+                    call = call.enforce_single_parent(        value.map(|v| arg_from_str(v, err, "enforce-single-parent", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -2384,7 +2383,7 @@ where
                     call = call.space(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -2441,13 +2440,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-viewed-date" => {
-                    call = call.update_viewed_date(arg_from_str(value.unwrap_or("false"), err, "update-viewed-date", "boolean"));
+                    call = call.update_viewed_date(        value.map(|v| arg_from_str(v, err, "update-viewed-date", "boolean")).unwrap_or(false));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "revision-id" => {
                     call = call.revision_id(value.unwrap_or(""));
@@ -2459,7 +2458,7 @@ where
                     call = call.include_permissions_for_view(value.unwrap_or(""));
                 },
                 "acknowledge-abuse" => {
-                    call = call.acknowledge_abuse(arg_from_str(value.unwrap_or("false"), err, "acknowledge-abuse", "boolean"));
+                    call = call.acknowledge_abuse(        value.map(|v| arg_from_str(v, err, "acknowledge-abuse", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -2726,7 +2725,7 @@ where
                     call = call.visibility(value.unwrap_or(""));
                 },
                 "use-content-as-indexable-text" => {
-                    call = call.use_content_as_indexable_text(arg_from_str(value.unwrap_or("false"), err, "use-content-as-indexable-text", "boolean"));
+                    call = call.use_content_as_indexable_text(        value.map(|v| arg_from_str(v, err, "use-content-as-indexable-text", "boolean")).unwrap_or(false));
                 },
                 "timed-text-track-name" => {
                     call = call.timed_text_track_name(value.unwrap_or(""));
@@ -2735,28 +2734,28 @@ where
                     call = call.timed_text_language(value.unwrap_or(""));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "pinned" => {
-                    call = call.pinned(arg_from_str(value.unwrap_or("false"), err, "pinned", "boolean"));
+                    call = call.pinned(        value.map(|v| arg_from_str(v, err, "pinned", "boolean")).unwrap_or(false));
                 },
                 "ocr-language" => {
                     call = call.ocr_language(value.unwrap_or(""));
                 },
                 "ocr" => {
-                    call = call.ocr(arg_from_str(value.unwrap_or("false"), err, "ocr", "boolean"));
+                    call = call.ocr(        value.map(|v| arg_from_str(v, err, "ocr", "boolean")).unwrap_or(false));
                 },
                 "include-permissions-for-view" => {
                     call = call.include_permissions_for_view(value.unwrap_or(""));
                 },
                 "enforce-single-parent" => {
-                    call = call.enforce_single_parent(arg_from_str(value.unwrap_or("false"), err, "enforce-single-parent", "boolean"));
+                    call = call.enforce_single_parent(        value.map(|v| arg_from_str(v, err, "enforce-single-parent", "boolean")).unwrap_or(false));
                 },
                 "convert" => {
-                    call = call.convert(arg_from_str(value.unwrap_or("false"), err, "convert", "boolean"));
+                    call = call.convert(        value.map(|v| arg_from_str(v, err, "convert", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -2818,10 +2817,10 @@ where
                     call = call.team_drive_id(value.unwrap_or(""));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "spaces" => {
                     call = call.spaces(value.unwrap_or(""));
@@ -2839,16 +2838,16 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "include-team-drive-items" => {
-                    call = call.include_team_drive_items(arg_from_str(value.unwrap_or("false"), err, "include-team-drive-items", "boolean"));
+                    call = call.include_team_drive_items(        value.map(|v| arg_from_str(v, err, "include-team-drive-items", "boolean")).unwrap_or(false));
                 },
                 "include-permissions-for-view" => {
                     call = call.include_permissions_for_view(value.unwrap_or(""));
                 },
                 "include-items-from-all-drives" => {
-                    call = call.include_items_from_all_drives(arg_from_str(value.unwrap_or("false"), err, "include-items-from-all-drives", "boolean"));
+                    call = call.include_items_from_all_drives(        value.map(|v| arg_from_str(v, err, "include-items-from-all-drives", "boolean")).unwrap_or(false));
                 },
                 "drive-id" => {
                     call = call.drive_id(value.unwrap_or(""));
@@ -3112,10 +3111,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-content-as-indexable-text" => {
-                    call = call.use_content_as_indexable_text(arg_from_str(value.unwrap_or("false"), err, "use-content-as-indexable-text", "boolean"));
+                    call = call.use_content_as_indexable_text(        value.map(|v| arg_from_str(v, err, "use-content-as-indexable-text", "boolean")).unwrap_or(false));
                 },
                 "update-viewed-date" => {
-                    call = call.update_viewed_date(arg_from_str(value.unwrap_or("false"), err, "update-viewed-date", "boolean"));
+                    call = call.update_viewed_date(        value.map(|v| arg_from_str(v, err, "update-viewed-date", "boolean")).unwrap_or(false));
                 },
                 "timed-text-track-name" => {
                     call = call.timed_text_track_name(value.unwrap_or(""));
@@ -3124,28 +3123,28 @@ where
                     call = call.timed_text_language(value.unwrap_or(""));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "set-modified-date" => {
-                    call = call.set_modified_date(arg_from_str(value.unwrap_or("false"), err, "set-modified-date", "boolean"));
+                    call = call.set_modified_date(        value.map(|v| arg_from_str(v, err, "set-modified-date", "boolean")).unwrap_or(false));
                 },
                 "remove-parents" => {
                     call = call.remove_parents(value.unwrap_or(""));
                 },
                 "pinned" => {
-                    call = call.pinned(arg_from_str(value.unwrap_or("false"), err, "pinned", "boolean"));
+                    call = call.pinned(        value.map(|v| arg_from_str(v, err, "pinned", "boolean")).unwrap_or(false));
                 },
                 "ocr-language" => {
                     call = call.ocr_language(value.unwrap_or(""));
                 },
                 "ocr" => {
-                    call = call.ocr(arg_from_str(value.unwrap_or("false"), err, "ocr", "boolean"));
+                    call = call.ocr(        value.map(|v| arg_from_str(v, err, "ocr", "boolean")).unwrap_or(false));
                 },
                 "new-revision" => {
-                    call = call.new_revision(arg_from_str(value.unwrap_or("false"), err, "new-revision", "boolean"));
+                    call = call.new_revision(        value.map(|v| arg_from_str(v, err, "new-revision", "boolean")).unwrap_or(false));
                 },
                 "modified-date-behavior" => {
                     call = call.modified_date_behavior(value.unwrap_or(""));
@@ -3154,10 +3153,10 @@ where
                     call = call.include_permissions_for_view(value.unwrap_or(""));
                 },
                 "enforce-single-parent" => {
-                    call = call.enforce_single_parent(arg_from_str(value.unwrap_or("false"), err, "enforce-single-parent", "boolean"));
+                    call = call.enforce_single_parent(        value.map(|v| arg_from_str(v, err, "enforce-single-parent", "boolean")).unwrap_or(false));
                 },
                 "convert" => {
-                    call = call.convert(arg_from_str(value.unwrap_or("false"), err, "convert", "boolean"));
+                    call = call.convert(        value.map(|v| arg_from_str(v, err, "convert", "boolean")).unwrap_or(false));
                 },
                 "add-parents" => {
                     call = call.add_parents(value.unwrap_or(""));
@@ -3216,10 +3215,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "include-permissions-for-view" => {
                     call = call.include_permissions_for_view(value.unwrap_or(""));
@@ -3278,10 +3277,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "include-permissions-for-view" => {
                     call = call.include_permissions_for_view(value.unwrap_or(""));
@@ -3340,10 +3339,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "include-permissions-for-view" => {
                     call = call.include_permissions_for_view(value.unwrap_or(""));
@@ -3601,10 +3600,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-content-as-indexable-text" => {
-                    call = call.use_content_as_indexable_text(arg_from_str(value.unwrap_or("false"), err, "use-content-as-indexable-text", "boolean"));
+                    call = call.use_content_as_indexable_text(        value.map(|v| arg_from_str(v, err, "use-content-as-indexable-text", "boolean")).unwrap_or(false));
                 },
                 "update-viewed-date" => {
-                    call = call.update_viewed_date(arg_from_str(value.unwrap_or("false"), err, "update-viewed-date", "boolean"));
+                    call = call.update_viewed_date(        value.map(|v| arg_from_str(v, err, "update-viewed-date", "boolean")).unwrap_or(false));
                 },
                 "timed-text-track-name" => {
                     call = call.timed_text_track_name(value.unwrap_or(""));
@@ -3613,28 +3612,28 @@ where
                     call = call.timed_text_language(value.unwrap_or(""));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "set-modified-date" => {
-                    call = call.set_modified_date(arg_from_str(value.unwrap_or("false"), err, "set-modified-date", "boolean"));
+                    call = call.set_modified_date(        value.map(|v| arg_from_str(v, err, "set-modified-date", "boolean")).unwrap_or(false));
                 },
                 "remove-parents" => {
                     call = call.remove_parents(value.unwrap_or(""));
                 },
                 "pinned" => {
-                    call = call.pinned(arg_from_str(value.unwrap_or("false"), err, "pinned", "boolean"));
+                    call = call.pinned(        value.map(|v| arg_from_str(v, err, "pinned", "boolean")).unwrap_or(false));
                 },
                 "ocr-language" => {
                     call = call.ocr_language(value.unwrap_or(""));
                 },
                 "ocr" => {
-                    call = call.ocr(arg_from_str(value.unwrap_or("false"), err, "ocr", "boolean"));
+                    call = call.ocr(        value.map(|v| arg_from_str(v, err, "ocr", "boolean")).unwrap_or(false));
                 },
                 "new-revision" => {
-                    call = call.new_revision(arg_from_str(value.unwrap_or("false"), err, "new-revision", "boolean"));
+                    call = call.new_revision(        value.map(|v| arg_from_str(v, err, "new-revision", "boolean")).unwrap_or(false));
                 },
                 "modified-date-behavior" => {
                     call = call.modified_date_behavior(value.unwrap_or(""));
@@ -3643,10 +3642,10 @@ where
                     call = call.include_permissions_for_view(value.unwrap_or(""));
                 },
                 "enforce-single-parent" => {
-                    call = call.enforce_single_parent(arg_from_str(value.unwrap_or("false"), err, "enforce-single-parent", "boolean"));
+                    call = call.enforce_single_parent(        value.map(|v| arg_from_str(v, err, "enforce-single-parent", "boolean")).unwrap_or(false));
                 },
                 "convert" => {
-                    call = call.convert(arg_from_str(value.unwrap_or("false"), err, "convert", "boolean"));
+                    call = call.convert(        value.map(|v| arg_from_str(v, err, "convert", "boolean")).unwrap_or(false));
                 },
                 "add-parents" => {
                     call = call.add_parents(value.unwrap_or(""));
@@ -3751,13 +3750,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "update-viewed-date" => {
-                    call = call.update_viewed_date(arg_from_str(value.unwrap_or("false"), err, "update-viewed-date", "boolean"));
+                    call = call.update_viewed_date(        value.map(|v| arg_from_str(v, err, "update-viewed-date", "boolean")).unwrap_or(false));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "revision-id" => {
                     call = call.revision_id(value.unwrap_or(""));
@@ -3769,7 +3768,7 @@ where
                     call = call.include_permissions_for_view(value.unwrap_or(""));
                 },
                 "acknowledge-abuse" => {
-                    call = call.acknowledge_abuse(arg_from_str(value.unwrap_or("false"), err, "acknowledge-abuse", "boolean"));
+                    call = call.acknowledge_abuse(        value.map(|v| arg_from_str(v, err, "acknowledge-abuse", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -3834,7 +3833,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "enforce-single-parent" => {
-                    call = call.enforce_single_parent(arg_from_str(value.unwrap_or("false"), err, "enforce-single-parent", "boolean"));
+                    call = call.enforce_single_parent(        value.map(|v| arg_from_str(v, err, "enforce-single-parent", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -3971,13 +3970,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "enforce-single-parent" => {
-                    call = call.enforce_single_parent(arg_from_str(value.unwrap_or("false"), err, "enforce-single-parent", "boolean"));
+                    call = call.enforce_single_parent(        value.map(|v| arg_from_str(v, err, "enforce-single-parent", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -4085,13 +4084,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-domain-admin-access" => {
-                    call = call.use_domain_admin_access(arg_from_str(value.unwrap_or("false"), err, "use-domain-admin-access", "boolean"));
+                    call = call.use_domain_admin_access(        value.map(|v| arg_from_str(v, err, "use-domain-admin-access", "boolean")).unwrap_or(false));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -4139,13 +4138,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-domain-admin-access" => {
-                    call = call.use_domain_admin_access(arg_from_str(value.unwrap_or("false"), err, "use-domain-admin-access", "boolean"));
+                    call = call.use_domain_admin_access(        value.map(|v| arg_from_str(v, err, "use-domain-admin-access", "boolean")).unwrap_or(false));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -4303,22 +4302,22 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-domain-admin-access" => {
-                    call = call.use_domain_admin_access(arg_from_str(value.unwrap_or("false"), err, "use-domain-admin-access", "boolean"));
+                    call = call.use_domain_admin_access(        value.map(|v| arg_from_str(v, err, "use-domain-admin-access", "boolean")).unwrap_or(false));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "send-notification-emails" => {
-                    call = call.send_notification_emails(arg_from_str(value.unwrap_or("false"), err, "send-notification-emails", "boolean"));
+                    call = call.send_notification_emails(        value.map(|v| arg_from_str(v, err, "send-notification-emails", "boolean")).unwrap_or(false));
                 },
                 "move-to-new-owners-root" => {
-                    call = call.move_to_new_owners_root(arg_from_str(value.unwrap_or("false"), err, "move-to-new-owners-root", "boolean"));
+                    call = call.move_to_new_owners_root(        value.map(|v| arg_from_str(v, err, "move-to-new-owners-root", "boolean")).unwrap_or(false));
                 },
                 "enforce-single-parent" => {
-                    call = call.enforce_single_parent(arg_from_str(value.unwrap_or("false"), err, "enforce-single-parent", "boolean"));
+                    call = call.enforce_single_parent(        value.map(|v| arg_from_str(v, err, "enforce-single-parent", "boolean")).unwrap_or(false));
                 },
                 "email-message" => {
                     call = call.email_message(value.unwrap_or(""));
@@ -4377,19 +4376,19 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-domain-admin-access" => {
-                    call = call.use_domain_admin_access(arg_from_str(value.unwrap_or("false"), err, "use-domain-admin-access", "boolean"));
+                    call = call.use_domain_admin_access(        value.map(|v| arg_from_str(v, err, "use-domain-admin-access", "boolean")).unwrap_or(false));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "include-permissions-for-view" => {
                     call = call.include_permissions_for_view(value.unwrap_or(""));
@@ -4498,19 +4497,19 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-domain-admin-access" => {
-                    call = call.use_domain_admin_access(arg_from_str(value.unwrap_or("false"), err, "use-domain-admin-access", "boolean"));
+                    call = call.use_domain_admin_access(        value.map(|v| arg_from_str(v, err, "use-domain-admin-access", "boolean")).unwrap_or(false));
                 },
                 "transfer-ownership" => {
-                    call = call.transfer_ownership(arg_from_str(value.unwrap_or("false"), err, "transfer-ownership", "boolean"));
+                    call = call.transfer_ownership(        value.map(|v| arg_from_str(v, err, "transfer-ownership", "boolean")).unwrap_or(false));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "remove-expiration" => {
-                    call = call.remove_expiration(arg_from_str(value.unwrap_or("false"), err, "remove-expiration", "boolean"));
+                    call = call.remove_expiration(        value.map(|v| arg_from_str(v, err, "remove-expiration", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -4616,19 +4615,19 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-domain-admin-access" => {
-                    call = call.use_domain_admin_access(arg_from_str(value.unwrap_or("false"), err, "use-domain-admin-access", "boolean"));
+                    call = call.use_domain_admin_access(        value.map(|v| arg_from_str(v, err, "use-domain-admin-access", "boolean")).unwrap_or(false));
                 },
                 "transfer-ownership" => {
-                    call = call.transfer_ownership(arg_from_str(value.unwrap_or("false"), err, "transfer-ownership", "boolean"));
+                    call = call.transfer_ownership(        value.map(|v| arg_from_str(v, err, "transfer-ownership", "boolean")).unwrap_or(false));
                 },
                 "supports-team-drives" => {
-                    call = call.supports_team_drives(arg_from_str(value.unwrap_or("false"), err, "supports-team-drives", "boolean"));
+                    call = call.supports_team_drives(        value.map(|v| arg_from_str(v, err, "supports-team-drives", "boolean")).unwrap_or(false));
                 },
                 "supports-all-drives" => {
-                    call = call.supports_all_drives(arg_from_str(value.unwrap_or("false"), err, "supports-all-drives", "boolean"));
+                    call = call.supports_all_drives(        value.map(|v| arg_from_str(v, err, "supports-all-drives", "boolean")).unwrap_or(false));
                 },
                 "remove-expiration" => {
-                    call = call.remove_expiration(arg_from_str(value.unwrap_or("false"), err, "remove-expiration", "boolean"));
+                    call = call.remove_expiration(        value.map(|v| arg_from_str(v, err, "remove-expiration", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -5162,7 +5161,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "include-deleted" => {
-                    call = call.include_deleted(arg_from_str(value.unwrap_or("false"), err, "include-deleted", "boolean"));
+                    call = call.include_deleted(        value.map(|v| arg_from_str(v, err, "include-deleted", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -5319,10 +5318,10 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 "include-deleted" => {
-                    call = call.include_deleted(arg_from_str(value.unwrap_or("false"), err, "include-deleted", "boolean"));
+                    call = call.include_deleted(        value.map(|v| arg_from_str(v, err, "include-deleted", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -5673,7 +5672,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -5987,7 +5986,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-domain-admin-access" => {
-                    call = call.use_domain_admin_access(arg_from_str(value.unwrap_or("false"), err, "use-domain-admin-access", "boolean"));
+                    call = call.use_domain_admin_access(        value.map(|v| arg_from_str(v, err, "use-domain-admin-access", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -6162,7 +6161,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-domain-admin-access" => {
-                    call = call.use_domain_admin_access(arg_from_str(value.unwrap_or("false"), err, "use-domain-admin-access", "boolean"));
+                    call = call.use_domain_admin_access(        value.map(|v| arg_from_str(v, err, "use-domain-admin-access", "boolean")).unwrap_or(false));
                 },
                 "q" => {
                     call = call.q(value.unwrap_or(""));
@@ -6171,7 +6170,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -6294,7 +6293,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "use-domain-admin-access" => {
-                    call = call.use_domain_admin_access(arg_from_str(value.unwrap_or("false"), err, "use-domain-admin-access", "boolean"));
+                    call = call.use_domain_admin_access(        value.map(|v| arg_from_str(v, err, "use-domain-admin-access", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -8593,7 +8592,7 @@ async fn main() {
     
     let mut app = App::new("drive2")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.1+20220225")
+           .version("5.0.2-beta-1+20220225")
            .about("Manages files in Drive including uploading, downloading, searching, detecting changes, and updating sharing permissions.")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_drive2_cli")
            .arg(Arg::with_name("url")

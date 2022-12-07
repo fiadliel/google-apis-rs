@@ -3,8 +3,6 @@
 // DO NOT EDIT !
 #![allow(unused_variables, unused_imports, dead_code, unused_mut)]
 
-extern crate tokio;
-
 #[macro_use]
 extern crate clap;
 
@@ -12,9 +10,10 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_doubleclicksearch2::{api, Error, oauth2};
+use google_doubleclicksearch2::{api, Error, oauth2, client::chrono, FieldMask};
 
-mod client;
+
+use google_clis_common as client;
 
 use client::{InvalidOptionsError, CLIError, arg_from_str, writer_from_opts, parse_kv_arg,
           input_file_from_opts, input_mime_from_opts, FieldCursor, FieldError, CallType, UploadProtocol,
@@ -62,16 +61,16 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "criterion-id" => {
-                    call = call.criterion_id(value.unwrap_or(""));
+                    call = call.criterion_id(        value.map(|v| arg_from_str(v, err, "criterion-id", "int64")).unwrap_or(-0));
                 },
                 "campaign-id" => {
-                    call = call.campaign_id(value.unwrap_or(""));
+                    call = call.campaign_id(        value.map(|v| arg_from_str(v, err, "campaign-id", "int64")).unwrap_or(-0));
                 },
                 "ad-id" => {
-                    call = call.ad_id(value.unwrap_or(""));
+                    call = call.ad_id(        value.map(|v| arg_from_str(v, err, "ad-id", "int64")).unwrap_or(-0));
                 },
                 "ad-group-id" => {
-                    call = call.ad_group_id(value.unwrap_or(""));
+                    call = call.ad_group_id(        value.map(|v| arg_from_str(v, err, "ad-group-id", "int64")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -1133,7 +1132,7 @@ async fn main() {
     
     let mut app = App::new("doubleclicksearch2")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.1+20220301")
+           .version("5.0.2-beta-1+20220301")
            .about("The Search Ads 360 API allows developers to automate uploading conversions and downloading reports from Search Ads 360.")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_doubleclicksearch2_cli")
            .arg(Arg::with_name("url")

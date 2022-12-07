@@ -1,19 +1,20 @@
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::default::Default;
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::error::Error as StdError;
 use serde_json as json;
 use std::io;
 use std::fs;
 use std::mem;
-use std::thread::sleep;
 
-use http::Uri;
 use hyper::client::connect;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::time::sleep;
 use tower_service;
-use crate::client;
+use serde::{Serialize, Deserialize};
+
+use crate::{client, client::GetToken, client::serde_with};
 
 // ##############
 // UTILITIES ###
@@ -62,7 +63,7 @@ impl Default for Scope {
 /// use datamigration1::{Result, Error};
 /// # async fn dox() {
 /// use std::default::Default;
-/// use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// // Get an ApplicationSecret instance by some means. It contains the `client_id` and 
 /// // `client_secret`, among other things.
@@ -112,7 +113,7 @@ impl Default for Scope {
 #[derive(Clone)]
 pub struct DatabaseMigrationService<S> {
     pub client: hyper::Client<S, hyper::body::Body>,
-    pub auth: oauth2::authenticator::Authenticator<S>,
+    pub auth: Box<dyn client::GetToken>,
     _user_agent: String,
     _base_url: String,
     _root_url: String,
@@ -122,11 +123,11 @@ impl<'a, S> client::Hub for DatabaseMigrationService<S> {}
 
 impl<'a, S> DatabaseMigrationService<S> {
 
-    pub fn new(client: hyper::Client<S, hyper::body::Body>, authenticator: oauth2::authenticator::Authenticator<S>) -> DatabaseMigrationService<S> {
+    pub fn new<A: 'static + client::GetToken>(client: hyper::Client<S, hyper::body::Body>, auth: A) -> DatabaseMigrationService<S> {
         DatabaseMigrationService {
             client,
-            auth: authenticator,
-            _user_agent: "google-api-rust-client/4.0.1".to_string(),
+            auth: Box::new(auth),
+            _user_agent: "google-api-rust-client/5.0.2-beta-1".to_string(),
             _base_url: "https://datamigration.googleapis.com/".to_string(),
             _root_url: "https://datamigration.googleapis.com/".to_string(),
         }
@@ -137,7 +138,7 @@ impl<'a, S> DatabaseMigrationService<S> {
     }
 
     /// Set the user-agent header field to use in all requests to the server.
-    /// It defaults to `google-api-rust-client/4.0.1`.
+    /// It defaults to `google-api-rust-client/5.0.2-beta-1`.
     ///
     /// Returns the previously set user-agent.
     pub fn user_agent(&mut self, agent_name: String) -> String {
@@ -169,12 +170,15 @@ impl<'a, S> DatabaseMigrationService<S> {
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct AuditConfig {
     /// The configuration for logging of each type of permission.
     #[serde(rename="auditLogConfigs")]
+    
     pub audit_log_configs: Option<Vec<AuditLogConfig>>,
     /// Specifies a service that will be enabled for audit logging. For example, `storage.googleapis.com`, `cloudsql.googleapis.com`. `allServices` is a special value that covers all services.
+    
     pub service: Option<String>,
 }
 
@@ -185,13 +189,16 @@ impl client::Part for AuditConfig {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct AuditLogConfig {
     /// Specifies the identities that do not cause logging for this type of permission. Follows the same format of Binding.members.
     #[serde(rename="exemptedMembers")]
+    
     pub exempted_members: Option<Vec<String>>,
     /// The log type that this config enables.
     #[serde(rename="logType")]
+    
     pub log_type: Option<String>,
 }
 
@@ -202,13 +209,17 @@ impl client::Part for AuditLogConfig {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Binding {
     /// The condition that is associated with this binding. If the condition evaluates to `true`, then this binding applies to the current request. If the condition evaluates to `false`, then this binding does not apply to the current request. However, a different role binding might grant the same role to one or more of the principals in this binding. To learn which resources support conditions in their IAM policies, see the [IAM documentation](https://cloud.google.com/iam/help/conditions/resource-policies).
+    
     pub condition: Option<Expr>,
     /// Specifies the principals requesting access for a Cloud Platform resource. `members` can have the following values: * `allUsers`: A special identifier that represents anyone who is on the internet; with or without a Google account. * `allAuthenticatedUsers`: A special identifier that represents anyone who is authenticated with a Google account or a service account. * `user:{emailid}`: An email address that represents a specific Google account. For example, `alice@example.com` . * `serviceAccount:{emailid}`: An email address that represents a service account. For example, `my-other-app@appspot.gserviceaccount.com`. * `group:{emailid}`: An email address that represents a Google group. For example, `admins@example.com`. * `deleted:user:{emailid}?uid={uniqueid}`: An email address (plus unique identifier) representing a user that has been recently deleted. For example, `alice@example.com?uid=123456789012345678901`. If the user is recovered, this value reverts to `user:{emailid}` and the recovered user retains the role in the binding. * `deleted:serviceAccount:{emailid}?uid={uniqueid}`: An email address (plus unique identifier) representing a service account that has been recently deleted. For example, `my-other-app@appspot.gserviceaccount.com?uid=123456789012345678901`. If the service account is undeleted, this value reverts to `serviceAccount:{emailid}` and the undeleted service account retains the role in the binding. * `deleted:group:{emailid}?uid={uniqueid}`: An email address (plus unique identifier) representing a Google group that has been recently deleted. For example, `admins@example.com?uid=123456789012345678901`. If the group is recovered, this value reverts to `group:{emailid}` and the recovered group retains the role in the binding. * `domain:{domain}`: The G Suite domain (primary) that represents all the users of that domain. For example, `google.com` or `example.com`. 
+    
     pub members: Option<Vec<String>>,
     /// Role that is assigned to the list of `members`, or principals. For example, `roles/viewer`, `roles/editor`, or `roles/owner`.
+    
     pub role: Option<String>,
 }
 
@@ -224,6 +235,7 @@ impl client::Part for Binding {}
 /// 
 /// * [locations operations cancel projects](ProjectLocationOperationCancelCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct CancelOperationRequest { _never_set: Option<bool> }
 
@@ -234,18 +246,23 @@ impl client::RequestValue for CancelOperationRequest {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct CloudSqlConnectionProfile {
     /// Output only. The Cloud SQL instance ID that this connection profile is associated with.
     #[serde(rename="cloudSqlId")]
+    
     pub cloud_sql_id: Option<String>,
     /// Output only. The Cloud SQL database instance's private IP.
     #[serde(rename="privateIp")]
+    
     pub private_ip: Option<String>,
     /// Output only. The Cloud SQL database instance's public IP.
     #[serde(rename="publicIp")]
+    
     pub public_ip: Option<String>,
     /// Immutable. Metadata used to create the destination Cloud SQL database.
+    
     pub settings: Option<CloudSqlSettings>,
 }
 
@@ -256,52 +273,71 @@ impl client::Part for CloudSqlConnectionProfile {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct CloudSqlSettings {
     /// The activation policy specifies when the instance is activated; it is applicable only when the instance state is 'RUNNABLE'. Valid values: 'ALWAYS': The instance is on, and remains so even in the absence of connection requests. `NEVER`: The instance is off; it is not activated, even if a connection request arrives.
     #[serde(rename="activationPolicy")]
+    
     pub activation_policy: Option<String>,
     /// [default: ON] If you enable this setting, Cloud SQL checks your available storage every 30 seconds. If the available storage falls below a threshold size, Cloud SQL automatically adds additional storage capacity. If the available storage repeatedly falls below the threshold size, Cloud SQL continues to add storage until it reaches the maximum of 30 TB.
     #[serde(rename="autoStorageIncrease")]
+    
     pub auto_storage_increase: Option<bool>,
     /// The KMS key name used for the csql instance.
     #[serde(rename="cmekKeyName")]
+    
     pub cmek_key_name: Option<String>,
     /// The Cloud SQL default instance level collation.
+    
     pub collation: Option<String>,
     /// The storage capacity available to the database, in GB. The minimum (and default) size is 10GB.
     #[serde(rename="dataDiskSizeGb")]
-    pub data_disk_size_gb: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub data_disk_size_gb: Option<i64>,
     /// The type of storage: `PD_SSD` (default) or `PD_HDD`.
     #[serde(rename="dataDiskType")]
+    
     pub data_disk_type: Option<String>,
     /// The database flags passed to the Cloud SQL instance at startup. An object containing a list of "key": value pairs. Example: { "name": "wrench", "mass": "1.3kg", "count": "3" }.
     #[serde(rename="databaseFlags")]
+    
     pub database_flags: Option<HashMap<String, String>>,
     /// The database engine type and version.
     #[serde(rename="databaseVersion")]
+    
     pub database_version: Option<String>,
     /// The settings for IP Management. This allows to enable or disable the instance IP and manage which external networks can connect to the instance. The IPv4 address cannot be disabled.
     #[serde(rename="ipConfig")]
+    
     pub ip_config: Option<SqlIpConfig>,
     /// Input only. Initial root password.
     #[serde(rename="rootPassword")]
+    
     pub root_password: Option<String>,
     /// Output only. Indicates If this connection profile root password is stored.
     #[serde(rename="rootPasswordSet")]
+    
     pub root_password_set: Option<bool>,
     /// The Database Migration Service source connection profile ID, in the format: `projects/my_project_name/locations/us-central1/connectionProfiles/connection_profile_ID`
     #[serde(rename="sourceId")]
+    
     pub source_id: Option<String>,
     /// The maximum size to which storage capacity can be automatically increased. The default value is 0, which specifies that there is no limit.
     #[serde(rename="storageAutoResizeLimit")]
-    pub storage_auto_resize_limit: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub storage_auto_resize_limit: Option<i64>,
     /// The tier (or machine type) for this instance, for example: `db-n1-standard-1` (MySQL instances) or `db-custom-1-3840` (PostgreSQL instances). For more information, see [Cloud SQL Instance Settings](https://cloud.google.com/sql/docs/mysql/instance-settings).
+    
     pub tier: Option<String>,
     /// The resource labels for a Cloud SQL instance to use to annotate any related underlying resources such as Compute Engine VMs. An object containing a list of "key": "value" pairs. Example: `{ "name": "wrench", "mass": "18kg", "count": "3" }`.
     #[serde(rename="userLabels")]
+    
     pub user_labels: Option<HashMap<String, String>>,
     /// The Google Cloud Platform zone where your Cloud SQL datdabse instance is located.
+    
     pub zone: Option<String>,
 }
 
@@ -319,33 +355,45 @@ impl client::Part for CloudSqlSettings {}
 /// * [locations connection profiles get projects](ProjectLocationConnectionProfileGetCall) (response)
 /// * [locations connection profiles patch projects](ProjectLocationConnectionProfilePatchCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionProfile {
     /// A CloudSQL database connection profile.
+    
     pub cloudsql: Option<CloudSqlConnectionProfile>,
     /// Output only. The timestamp when the resource was created. A timestamp in RFC3339 UTC "Zulu" format, accurate to nanoseconds. Example: "2014-10-02T15:01:23.045123456Z".
     #[serde(rename="createTime")]
-    pub create_time: Option<String>,
+    
+    pub create_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The connection profile display name.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// Output only. The error details in case of state FAILED.
+    
     pub error: Option<Status>,
     /// The resource labels for connection profile to use to annotate any related underlying resources such as Compute Engine VMs. An object containing a list of "key": "value" pairs. Example: `{ "name": "wrench", "mass": "1.3kg", "count": "3" }`.
+    
     pub labels: Option<HashMap<String, String>>,
     /// A MySQL database connection profile.
+    
     pub mysql: Option<MySqlConnectionProfile>,
     /// The name of this connection profile resource in the form of projects/{project}/locations/{location}/connectionProfiles/{connectionProfile}.
+    
     pub name: Option<String>,
     /// A PostgreSQL database connection profile.
+    
     pub postgresql: Option<PostgreSqlConnectionProfile>,
     /// The database provider.
+    
     pub provider: Option<String>,
     /// The current connection profile state (e.g. DRAFT, READY, or FAILED).
+    
     pub state: Option<String>,
     /// Output only. The timestamp when the resource was last updated. A timestamp in RFC3339 UTC "Zulu" format, accurate to nanoseconds. Example: "2014-10-02T15:01:23.045123456Z".
     #[serde(rename="updateTime")]
-    pub update_time: Option<String>,
+    
+    pub update_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
 }
 
 impl client::RequestValue for ConnectionProfile {}
@@ -356,11 +404,14 @@ impl client::ResponseResult for ConnectionProfile {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct DatabaseType {
     /// The database engine.
+    
     pub engine: Option<String>,
     /// The database provider.
+    
     pub provider: Option<String>,
 }
 
@@ -371,11 +422,14 @@ impl client::Part for DatabaseType {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct DumpFlag {
     /// The name of the flag
+    
     pub name: Option<String>,
     /// The value of the flag.
+    
     pub value: Option<String>,
 }
 
@@ -386,10 +440,12 @@ impl client::Part for DumpFlag {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct DumpFlags {
     /// The flags for the initial dump.
     #[serde(rename="dumpFlags")]
+    
     pub dump_flags: Option<Vec<DumpFlag>>,
 }
 
@@ -406,6 +462,7 @@ impl client::Part for DumpFlags {}
 /// * [locations operations cancel projects](ProjectLocationOperationCancelCall) (response)
 /// * [locations operations delete projects](ProjectLocationOperationDeleteCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Empty { _never_set: Option<bool> }
 
@@ -416,15 +473,20 @@ impl client::ResponseResult for Empty {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Expr {
     /// Optional. Description of the expression. This is a longer text which describes the expression, e.g. when hovered over it in a UI.
+    
     pub description: Option<String>,
     /// Textual representation of an expression in Common Expression Language syntax.
+    
     pub expression: Option<String>,
     /// Optional. String indicating the location of the expression for error reporting, e.g. a file name and a position in the file.
+    
     pub location: Option<String>,
     /// Optional. Title for the expression, i.e. a short string describing its purpose. This can be used e.g. in UIs which allow to enter the expression.
+    
     pub title: Option<String>,
 }
 
@@ -440,18 +502,23 @@ impl client::Part for Expr {}
 /// 
 /// * [locations migration jobs generate ssh script projects](ProjectLocationMigrationJobGenerateSshScriptCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GenerateSshScriptRequest {
     /// Required. Bastion VM Instance name to use or to create.
+    
     pub vm: Option<String>,
     /// The VM creation configuration
     #[serde(rename="vmCreationConfig")]
+    
     pub vm_creation_config: Option<VmCreationConfig>,
     /// The port that will be open on the bastion host
     #[serde(rename="vmPort")]
+    
     pub vm_port: Option<i32>,
     /// The VM selection configuration
     #[serde(rename="vmSelectionConfig")]
+    
     pub vm_selection_config: Option<VmSelectionConfig>,
 }
 
@@ -467,15 +534,19 @@ impl client::RequestValue for GenerateSshScriptRequest {}
 /// 
 /// * [locations connection profiles list projects](ProjectLocationConnectionProfileListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ListConnectionProfilesResponse {
     /// The response list of connection profiles.
     #[serde(rename="connectionProfiles")]
+    
     pub connection_profiles: Option<Vec<ConnectionProfile>>,
     /// A token, which can be sent as `page_token` to retrieve the next page. If this field is omitted, there are no subsequent pages.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// Locations that could not be reached.
+    
     pub unreachable: Option<Vec<String>>,
 }
 
@@ -491,12 +562,15 @@ impl client::ResponseResult for ListConnectionProfilesResponse {}
 /// 
 /// * [locations list projects](ProjectLocationListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ListLocationsResponse {
     /// A list of locations that matches the specified filter in the request.
+    
     pub locations: Option<Vec<Location>>,
     /// The standard List next-page token.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
 }
 
@@ -512,15 +586,19 @@ impl client::ResponseResult for ListLocationsResponse {}
 /// 
 /// * [locations migration jobs list projects](ProjectLocationMigrationJobListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ListMigrationJobsResponse {
     /// The list of migration jobs objects.
     #[serde(rename="migrationJobs")]
+    
     pub migration_jobs: Option<Vec<MigrationJob>>,
     /// A token, which can be sent as `page_token` to retrieve the next page. If this field is omitted, there are no subsequent pages.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// Locations that could not be reached.
+    
     pub unreachable: Option<Vec<String>>,
 }
 
@@ -536,12 +614,15 @@ impl client::ResponseResult for ListMigrationJobsResponse {}
 /// 
 /// * [locations operations list projects](ProjectLocationOperationListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ListOperationsResponse {
     /// The standard List next-page token.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// A list of operations that matches the specified filter in the request.
+    
     pub operations: Option<Vec<Operation>>,
 }
 
@@ -557,19 +638,25 @@ impl client::ResponseResult for ListOperationsResponse {}
 /// 
 /// * [locations get projects](ProjectLocationGetCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Location {
     /// The friendly name for this location, typically a nearby city name. For example, "Tokyo".
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// Cross-service attributes for the location. For example {"cloud.googleapis.com/region": "us-east1"}
+    
     pub labels: Option<HashMap<String, String>>,
     /// The canonical id for this location. For example: `"us-east1"`.
     #[serde(rename="locationId")]
+    
     pub location_id: Option<String>,
     /// Service-specific metadata. For example the available capacity at the given location.
+    
     pub metadata: Option<HashMap<String, String>>,
     /// Resource name for the location, which may vary between implementations. For example: `"projects/example-project/locations/us-east1"`
+    
     pub name: Option<String>,
 }
 
@@ -587,59 +674,81 @@ impl client::ResponseResult for Location {}
 /// * [locations migration jobs get projects](ProjectLocationMigrationJobGetCall) (response)
 /// * [locations migration jobs patch projects](ProjectLocationMigrationJobPatchCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct MigrationJob {
     /// Output only. The timestamp when the migration job resource was created. A timestamp in RFC3339 UTC "Zulu" format, accurate to nanoseconds. Example: "2014-10-02T15:01:23.045123456Z".
     #[serde(rename="createTime")]
-    pub create_time: Option<String>,
+    
+    pub create_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Required. The resource name (URI) of the destination connection profile.
+    
     pub destination: Option<String>,
     /// The database engine type and provider of the destination.
     #[serde(rename="destinationDatabase")]
+    
     pub destination_database: Option<DatabaseType>,
     /// The migration job display name.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// The initial dump flags. This field and the "dump_path" field are mutually exclusive.
     #[serde(rename="dumpFlags")]
+    
     pub dump_flags: Option<DumpFlags>,
     /// The path to the dump file in Google Cloud Storage, in the format: (gs://[BUCKET_NAME]/[OBJECT_NAME]). This field and the "dump_flags" field are mutually exclusive.
     #[serde(rename="dumpPath")]
+    
     pub dump_path: Option<String>,
     /// Output only. The duration of the migration job (in seconds). A duration in seconds with up to nine fractional digits, terminated by 's'. Example: "3.5s".
-    pub duration: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde::duration::Wrapper>")]
+    pub duration: Option<client::chrono::Duration>,
     /// Output only. If the migration job is completed, the time when it was completed.
     #[serde(rename="endTime")]
-    pub end_time: Option<String>,
+    
+    pub end_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Output only. The error details in case of state FAILED.
+    
     pub error: Option<Status>,
     /// The resource labels for migration job to use to annotate any related underlying resources such as Compute Engine VMs. An object containing a list of "key": "value" pairs. Example: `{ "name": "wrench", "mass": "1.3kg", "count": "3" }`.
+    
     pub labels: Option<HashMap<String, String>>,
     /// The name (URI) of this migration job resource, in the form of: projects/{project}/locations/{location}/migrationJobs/{migrationJob}.
+    
     pub name: Option<String>,
     /// Output only. The current migration job phase.
+    
     pub phase: Option<String>,
     /// The details needed to communicate to the source over Reverse SSH tunnel connectivity.
     #[serde(rename="reverseSshConnectivity")]
+    
     pub reverse_ssh_connectivity: Option<ReverseSshConnectivity>,
     /// Required. The resource name (URI) of the source connection profile.
+    
     pub source: Option<String>,
     /// The database engine type and provider of the source.
     #[serde(rename="sourceDatabase")]
+    
     pub source_database: Option<DatabaseType>,
     /// The current migration job state.
+    
     pub state: Option<String>,
     /// static ip connectivity data (default, no additional details needed).
     #[serde(rename="staticIpConnectivity")]
+    
     pub static_ip_connectivity: Option<StaticIpConnectivity>,
     /// Required. The migration job type.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
     /// Output only. The timestamp when the migration job resource was last updated. A timestamp in RFC3339 UTC "Zulu" format, accurate to nanoseconds. Example: "2014-10-02T15:01:23.045123456Z".
     #[serde(rename="updateTime")]
-    pub update_time: Option<String>,
+    
+    pub update_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The details of the VPC network that the source database is located in.
     #[serde(rename="vpcPeeringConnectivity")]
+    
     pub vpc_peering_connectivity: Option<VpcPeeringConnectivity>,
 }
 
@@ -651,23 +760,31 @@ impl client::ResponseResult for MigrationJob {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct MySqlConnectionProfile {
     /// If the source is a Cloud SQL database, use this field to provide the Cloud SQL instance ID of the source.
     #[serde(rename="cloudSqlId")]
+    
     pub cloud_sql_id: Option<String>,
     /// Required. The IP or hostname of the source MySQL database.
+    
     pub host: Option<String>,
     /// Required. Input only. The password for the user that Database Migration Service will be using to connect to the database. This field is not returned on request, and the value is encrypted when stored in Database Migration Service.
+    
     pub password: Option<String>,
     /// Output only. Indicates If this connection profile password is stored.
     #[serde(rename="passwordSet")]
+    
     pub password_set: Option<bool>,
     /// Required. The network port of the source MySQL database.
+    
     pub port: Option<i32>,
     /// SSL configuration for the destination to connect to the source database.
+    
     pub ssl: Option<SslConfig>,
     /// Required. The username that Database Migration Service will use to connect to the database. The value is encrypted when stored in Database Migration Service.
+    
     pub username: Option<String>,
 }
 
@@ -695,17 +812,23 @@ impl client::Part for MySqlConnectionProfile {}
 /// * [locations migration jobs verify projects](ProjectLocationMigrationJobVerifyCall) (response)
 /// * [locations operations get projects](ProjectLocationOperationGetCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Operation {
     /// If the value is `false`, it means the operation is still in progress. If `true`, the operation is completed, and either `error` or `response` is available.
+    
     pub done: Option<bool>,
     /// The error result of the operation in case of failure or cancellation.
+    
     pub error: Option<Status>,
     /// Service-specific metadata associated with the operation. It typically contains progress information and common metadata such as create time. Some services might not provide such metadata. Any method that returns a long-running operation should document the metadata type, if any.
+    
     pub metadata: Option<HashMap<String, String>>,
     /// The server-assigned name, which is only unique within the same service that originally returns it. If you use the default HTTP mapping, the `name` should be a resource name ending with `operations/{unique_id}`.
+    
     pub name: Option<String>,
     /// The normal response of the operation in case of success. If the original method returns no data on success, such as `Delete`, the response is `google.protobuf.Empty`. If the original method is standard `Get`/`Create`/`Update`, the response should be the resource. For other methods, the response should have the type `XxxResponse`, where `Xxx` is the original method name. For example, if the original method name is `TakeSnapshot()`, the inferred response type is `TakeSnapshotResponse`.
+    
     pub response: Option<HashMap<String, String>>,
 }
 
@@ -724,16 +847,22 @@ impl client::ResponseResult for Operation {}
 /// * [locations migration jobs get iam policy projects](ProjectLocationMigrationJobGetIamPolicyCall) (response)
 /// * [locations migration jobs set iam policy projects](ProjectLocationMigrationJobSetIamPolicyCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Policy {
     /// Specifies cloud audit logging configuration for this policy.
     #[serde(rename="auditConfigs")]
+    
     pub audit_configs: Option<Vec<AuditConfig>>,
     /// Associates a list of `members`, or principals, with a `role`. Optionally, may specify a `condition` that determines how and when the `bindings` are applied. Each of the `bindings` must contain at least one principal. The `bindings` in a `Policy` can refer to up to 1,500 principals; up to 250 of these principals can be Google groups. Each occurrence of a principal counts towards these limits. For example, if the `bindings` grant 50 different roles to `user:alice@example.com`, and not to any other principal, then you can add another 1,450 principals to the `bindings` in the `Policy`.
+    
     pub bindings: Option<Vec<Binding>>,
     /// `etag` is used for optimistic concurrency control as a way to help prevent simultaneous updates of a policy from overwriting each other. It is strongly suggested that systems make use of the `etag` in the read-modify-write cycle to perform policy updates in order to avoid race conditions: An `etag` is returned in the response to `getIamPolicy`, and systems are expected to put that etag in the request to `setIamPolicy` to ensure that their change will be applied to the same version of the policy. **Important:** If you use IAM Conditions, you must include the `etag` field whenever you call `setIamPolicy`. If you omit this field, then IAM allows you to overwrite a version `3` policy with a version `1` policy, and all of the conditions in the version `3` policy are lost.
-    pub etag: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde::urlsafe_base64::Wrapper>")]
+    pub etag: Option<Vec<u8>>,
     /// Specifies the format of the policy. Valid values are `0`, `1`, and `3`. Requests that specify an invalid value are rejected. Any operation that affects conditional role bindings must specify version `3`. This requirement applies to the following operations: * Getting a policy that includes a conditional role binding * Adding a conditional role binding to a policy * Changing a conditional role binding in a policy * Removing any role binding, with or without a condition, from a policy that includes conditions **Important:** If you use IAM Conditions, you must include the `etag` field whenever you call `setIamPolicy`. If you omit this field, then IAM allows you to overwrite a version `3` policy with a version `1` policy, and all of the conditions in the version `3` policy are lost. If a policy does not include any conditions, operations on that policy may specify any valid version or leave the field unset. To learn which resources support conditions in their IAM policies, see the [IAM documentation](https://cloud.google.com/iam/help/conditions/resource-policies).
+    
     pub version: Option<i32>,
 }
 
@@ -744,23 +873,31 @@ impl client::ResponseResult for Policy {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct PostgreSqlConnectionProfile {
     /// If the source is a Cloud SQL database, use this field to provide the Cloud SQL instance ID of the source.
     #[serde(rename="cloudSqlId")]
+    
     pub cloud_sql_id: Option<String>,
     /// Required. The IP or hostname of the source PostgreSQL database.
+    
     pub host: Option<String>,
     /// Required. Input only. The password for the user that Database Migration Service will be using to connect to the database. This field is not returned on request, and the value is encrypted when stored in Database Migration Service.
+    
     pub password: Option<String>,
     /// Output only. Indicates If this connection profile password is stored.
     #[serde(rename="passwordSet")]
+    
     pub password_set: Option<bool>,
     /// Required. The network port of the source PostgreSQL database.
+    
     pub port: Option<i32>,
     /// SSL configuration for the destination to connect to the source database.
+    
     pub ssl: Option<SslConfig>,
     /// Required. The username that Database Migration Service will use to connect to the database. The value is encrypted when stored in Database Migration Service.
+    
     pub username: Option<String>,
 }
 
@@ -776,6 +913,7 @@ impl client::Part for PostgreSqlConnectionProfile {}
 /// 
 /// * [locations migration jobs promote projects](ProjectLocationMigrationJobPromoteCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct PromoteMigrationJobRequest { _never_set: Option<bool> }
 
@@ -791,6 +929,7 @@ impl client::RequestValue for PromoteMigrationJobRequest {}
 /// 
 /// * [locations migration jobs restart projects](ProjectLocationMigrationJobRestartCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct RestartMigrationJobRequest { _never_set: Option<bool> }
 
@@ -806,6 +945,7 @@ impl client::RequestValue for RestartMigrationJobRequest {}
 /// 
 /// * [locations migration jobs resume projects](ProjectLocationMigrationJobResumeCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ResumeMigrationJobRequest { _never_set: Option<bool> }
 
@@ -816,17 +956,22 @@ impl client::RequestValue for ResumeMigrationJobRequest {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ReverseSshConnectivity {
     /// The name of the virtual machine (Compute Engine) used as the bastion server for the SSH tunnel.
+    
     pub vm: Option<String>,
     /// Required. The IP of the virtual machine (Compute Engine) used as the bastion server for the SSH tunnel.
     #[serde(rename="vmIp")]
+    
     pub vm_ip: Option<String>,
     /// Required. The forwarding port of the virtual machine (Compute Engine) used as the bastion server for the SSH tunnel.
     #[serde(rename="vmPort")]
+    
     pub vm_port: Option<i32>,
     /// The name of the VPC to peer with the Cloud SQL private network.
+    
     pub vpc: Option<String>,
 }
 
@@ -843,13 +988,16 @@ impl client::Part for ReverseSshConnectivity {}
 /// * [locations connection profiles set iam policy projects](ProjectLocationConnectionProfileSetIamPolicyCall) (request)
 /// * [locations migration jobs set iam policy projects](ProjectLocationMigrationJobSetIamPolicyCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct SetIamPolicyRequest {
     /// REQUIRED: The complete policy to be applied to the `resource`. The size of the policy is limited to a few 10s of KB. An empty policy is a valid policy but certain Cloud Platform services (such as Projects) might reject them.
+    
     pub policy: Option<Policy>,
     /// OPTIONAL: A FieldMask specifying which fields of the policy to modify. Only the fields in the mask will be modified. If no mask is provided, the following default mask is used: `paths: "bindings, etag"`
     #[serde(rename="updateMask")]
-    pub update_mask: Option<String>,
+    
+    pub update_mask: Option<client::FieldMask>,
 }
 
 impl client::RequestValue for SetIamPolicyRequest {}
@@ -859,16 +1007,22 @@ impl client::RequestValue for SetIamPolicyRequest {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct SqlAclEntry {
     /// The time when this access control entry expires in [RFC 3339](https://tools.ietf.org/html/rfc3339) format, for example: `2012-11-15T16:19:00.094Z`.
     #[serde(rename="expireTime")]
-    pub expire_time: Option<String>,
+    
+    pub expire_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// A label to identify this entry.
+    
     pub label: Option<String>,
     /// Input only. The time-to-leave of this access control entry.
-    pub ttl: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde::duration::Wrapper>")]
+    pub ttl: Option<client::chrono::Duration>,
     /// The allowlisted value for the access control list.
+    
     pub value: Option<String>,
 }
 
@@ -879,19 +1033,24 @@ impl client::Part for SqlAclEntry {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct SqlIpConfig {
     /// The list of external networks that are allowed to connect to the instance using the IP. See https://en.wikipedia.org/wiki/CIDR_notation#CIDR_notation, also known as 'slash' notation (e.g. `192.168.100.0/24`).
     #[serde(rename="authorizedNetworks")]
+    
     pub authorized_networks: Option<Vec<SqlAclEntry>>,
     /// Whether the instance should be assigned an IPv4 address or not.
     #[serde(rename="enableIpv4")]
+    
     pub enable_ipv4: Option<bool>,
     /// The resource link for the VPC network from which the Cloud SQL instance is accessible for private IP. For example, `projects/myProject/global/networks/default`. This setting can be updated, but it cannot be removed after it is set.
     #[serde(rename="privateNetwork")]
+    
     pub private_network: Option<String>,
     /// Whether SSL connections over IP should be enforced or not.
     #[serde(rename="requireSsl")]
+    
     pub require_ssl: Option<bool>,
 }
 
@@ -907,9 +1066,11 @@ impl client::Part for SqlIpConfig {}
 /// 
 /// * [locations migration jobs generate ssh script projects](ProjectLocationMigrationJobGenerateSshScriptCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct SshScript {
     /// The ssh configuration script.
+    
     pub script: Option<String>,
 }
 
@@ -920,19 +1081,24 @@ impl client::ResponseResult for SshScript {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct SslConfig {
     /// Required. Input only. The x509 PEM-encoded certificate of the CA that signed the source database server's certificate. The replica will use this certificate to verify it's connecting to the right host.
     #[serde(rename="caCertificate")]
+    
     pub ca_certificate: Option<String>,
     /// Input only. The x509 PEM-encoded certificate that will be used by the replica to authenticate against the source database server.If this field is used then the 'client_key' field is mandatory.
     #[serde(rename="clientCertificate")]
+    
     pub client_certificate: Option<String>,
     /// Input only. The unencrypted PKCS#1 or PKCS#8 PEM-encoded private key associated with the Client Certificate. If this field is used then the 'client_certificate' field is mandatory.
     #[serde(rename="clientKey")]
+    
     pub client_key: Option<String>,
     /// Output only. The ssl config type according to 'client_key', 'client_certificate' and 'ca_certificate'.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -948,6 +1114,7 @@ impl client::Part for SslConfig {}
 /// 
 /// * [locations migration jobs start projects](ProjectLocationMigrationJobStartCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct StartMigrationJobRequest { _never_set: Option<bool> }
 
@@ -958,6 +1125,7 @@ impl client::RequestValue for StartMigrationJobRequest {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct StaticIpConnectivity { _never_set: Option<bool> }
 
@@ -968,13 +1136,17 @@ impl client::Part for StaticIpConnectivity {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Status {
     /// The status code, which should be an enum value of google.rpc.Code.
+    
     pub code: Option<i32>,
     /// A list of messages that carry the error details. There is a common set of message types for APIs to use.
+    
     pub details: Option<Vec<HashMap<String, String>>>,
     /// A developer-facing error message, which should be in English. Any user-facing error message should be localized and sent in the google.rpc.Status.details field, or localized by the client.
+    
     pub message: Option<String>,
 }
 
@@ -990,6 +1162,7 @@ impl client::Part for Status {}
 /// 
 /// * [locations migration jobs stop projects](ProjectLocationMigrationJobStopCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct StopMigrationJobRequest { _never_set: Option<bool> }
 
@@ -1006,9 +1179,11 @@ impl client::RequestValue for StopMigrationJobRequest {}
 /// * [locations connection profiles test iam permissions projects](ProjectLocationConnectionProfileTestIamPermissionCall) (request)
 /// * [locations migration jobs test iam permissions projects](ProjectLocationMigrationJobTestIamPermissionCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct TestIamPermissionsRequest {
     /// The set of permissions to check for the `resource`. Permissions with wildcards (such as '*' or 'storage.*') are not allowed. For more information see [IAM Overview](https://cloud.google.com/iam/docs/overview#permissions).
+    
     pub permissions: Option<Vec<String>>,
 }
 
@@ -1025,9 +1200,11 @@ impl client::RequestValue for TestIamPermissionsRequest {}
 /// * [locations connection profiles test iam permissions projects](ProjectLocationConnectionProfileTestIamPermissionCall) (response)
 /// * [locations migration jobs test iam permissions projects](ProjectLocationMigrationJobTestIamPermissionCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct TestIamPermissionsResponse {
     /// A subset of `TestPermissionsRequest.permissions` that the caller is allowed.
+    
     pub permissions: Option<Vec<String>>,
 }
 
@@ -1043,6 +1220,7 @@ impl client::ResponseResult for TestIamPermissionsResponse {}
 /// 
 /// * [locations migration jobs verify projects](ProjectLocationMigrationJobVerifyCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct VerifyMigrationJobRequest { _never_set: Option<bool> }
 
@@ -1053,15 +1231,19 @@ impl client::RequestValue for VerifyMigrationJobRequest {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct VmCreationConfig {
     /// The subnet name the vm needs to be created in.
+    
     pub subnet: Option<String>,
     /// Required. VM instance machine type to create.
     #[serde(rename="vmMachineType")]
+    
     pub vm_machine_type: Option<String>,
     /// The Google Cloud Platform zone to create the VM in.
     #[serde(rename="vmZone")]
+    
     pub vm_zone: Option<String>,
 }
 
@@ -1072,10 +1254,12 @@ impl client::Part for VmCreationConfig {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct VmSelectionConfig {
     /// Required. The Google Cloud Platform zone the VM is located.
     #[serde(rename="vmZone")]
+    
     pub vm_zone: Option<String>,
 }
 
@@ -1086,9 +1270,11 @@ impl client::Part for VmSelectionConfig {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct VpcPeeringConnectivity {
     /// The name of the VPC network to peer with the Cloud SQL private network.
+    
     pub vpc: Option<String>,
 }
 
@@ -1101,7 +1287,7 @@ impl client::Part for VpcPeeringConnectivity {}
 // #################
 
 /// A builder providing access to all methods supported on *project* resources.
-/// It is not used directly, but through the `DatabaseMigrationService` hub.
+/// It is not used directly, but through the [`DatabaseMigrationService`] hub.
 ///
 /// # Example
 ///
@@ -1114,7 +1300,7 @@ impl client::Part for VpcPeeringConnectivity {}
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -1703,7 +1889,7 @@ impl<'a, S> ProjectMethods<'a, S> {
 /// Creates a new connection profile in a given project and location.
 ///
 /// A builder for the *locations.connectionProfiles.create* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -1716,7 +1902,7 @@ impl<'a, S> ProjectMethods<'a, S> {
 /// use datamigration1::api::ConnectionProfile;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -1748,14 +1934,14 @@ pub struct ProjectLocationConnectionProfileCreateCall<'a, S>
     _connection_profile_id: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationConnectionProfileCreateCall<'a, S> {}
 
 impl<'a, S> ProjectLocationConnectionProfileCreateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -1764,70 +1950,51 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Operation)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.connectionProfiles.create",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._request_id {
-            params.push(("requestId", value.to_string()));
-        }
-        if let Some(value) = self._connection_profile_id {
-            params.push(("connectionProfileId", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "requestId", "connectionProfileId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._request_id.as_ref() {
+            params.push("requestId", value);
+        }
+        if let Some(value) = self._connection_profile_id.as_ref() {
+            params.push("connectionProfileId", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/connectionProfiles";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -1841,14 +2008,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -1857,23 +2024,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -1889,7 +2062,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -1956,7 +2129,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationConnectionProfileCreateCall<'a, S> {
@@ -1992,25 +2166,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationConnectionProfileCreateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationConnectionProfileCreateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationConnectionProfileCreateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationConnectionProfileCreateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -2019,7 +2204,7 @@ where
 /// Deletes a single Database Migration Service connection profile. A connection profile can only be deleted if it is not in use by any active migration jobs.
 ///
 /// A builder for the *locations.connectionProfiles.delete* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -2031,7 +2216,7 @@ where
 /// # extern crate google_datamigration1 as datamigration1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2057,14 +2242,14 @@ pub struct ProjectLocationConnectionProfileDeleteCall<'a, S>
     _force: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationConnectionProfileDeleteCall<'a, S> {}
 
 impl<'a, S> ProjectLocationConnectionProfileDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -2073,80 +2258,61 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Operation)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.connectionProfiles.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._request_id {
-            params.push(("requestId", value.to_string()));
-        }
-        if let Some(value) = self._force {
-            params.push(("force", value.to_string()));
-        }
+
         for &field in ["alt", "name", "requestId", "force"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._request_id.as_ref() {
+            params.push("requestId", value);
+        }
+        if let Some(value) = self._force.as_ref() {
+            params.push("force", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -2154,21 +2320,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -2184,7 +2356,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -2242,7 +2414,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationConnectionProfileDeleteCall<'a, S> {
@@ -2278,25 +2451,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationConnectionProfileDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationConnectionProfileDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationConnectionProfileDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationConnectionProfileDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -2305,7 +2489,7 @@ where
 /// Gets details of a single connection profile.
 ///
 /// A builder for the *locations.connectionProfiles.get* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -2317,7 +2501,7 @@ where
 /// # extern crate google_datamigration1 as datamigration1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2339,14 +2523,14 @@ pub struct ProjectLocationConnectionProfileGetCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationConnectionProfileGetCall<'a, S> {}
 
 impl<'a, S> ProjectLocationConnectionProfileGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -2355,74 +2539,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ConnectionProfile)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.connectionProfiles.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -2430,21 +2595,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -2460,7 +2631,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -2504,7 +2675,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationConnectionProfileGetCall<'a, S> {
@@ -2540,25 +2712,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationConnectionProfileGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationConnectionProfileGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationConnectionProfileGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationConnectionProfileGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -2567,7 +2750,7 @@ where
 /// Gets the access control policy for a resource. Returns an empty policy if the resource exists and does not have a policy set.
 ///
 /// A builder for the *locations.connectionProfiles.getIamPolicy* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -2579,7 +2762,7 @@ where
 /// # extern crate google_datamigration1 as datamigration1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2603,14 +2786,14 @@ pub struct ProjectLocationConnectionProfileGetIamPolicyCall<'a, S>
     _options_requested_policy_version: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationConnectionProfileGetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationConnectionProfileGetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -2619,77 +2802,58 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.connectionProfiles.getIamPolicy",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
-        if let Some(value) = self._options_requested_policy_version {
-            params.push(("options.requestedPolicyVersion", value.to_string()));
-        }
+
         for &field in ["alt", "resource", "options.requestedPolicyVersion"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
+        if let Some(value) = self._options_requested_policy_version.as_ref() {
+            params.push("options.requestedPolicyVersion", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:getIamPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -2697,21 +2861,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -2727,7 +2897,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -2778,7 +2948,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationConnectionProfileGetIamPolicyCall<'a, S> {
@@ -2814,25 +2985,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationConnectionProfileGetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationConnectionProfileGetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationConnectionProfileGetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationConnectionProfileGetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -2841,7 +3023,7 @@ where
 /// Retrieves a list of all connection profiles in a given project and location.
 ///
 /// A builder for the *locations.connectionProfiles.list* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -2853,7 +3035,7 @@ where
 /// # extern crate google_datamigration1 as datamigration1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2883,14 +3065,14 @@ pub struct ProjectLocationConnectionProfileListCall<'a, S>
     _filter: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationConnectionProfileListCall<'a, S> {}
 
 impl<'a, S> ProjectLocationConnectionProfileListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -2899,86 +3081,67 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ListConnectionProfilesResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.connectionProfiles.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
-        if let Some(value) = self._order_by {
-            params.push(("orderBy", value.to_string()));
-        }
-        if let Some(value) = self._filter {
-            params.push(("filter", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "pageToken", "pageSize", "orderBy", "filter"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
+        }
+        if let Some(value) = self._order_by.as_ref() {
+            params.push("orderBy", value);
+        }
+        if let Some(value) = self._filter.as_ref() {
+            params.push("filter", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/connectionProfiles";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -2986,21 +3149,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -3016,7 +3185,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -3088,7 +3257,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationConnectionProfileListCall<'a, S> {
@@ -3124,25 +3294,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationConnectionProfileListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationConnectionProfileListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationConnectionProfileListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationConnectionProfileListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -3151,7 +3332,7 @@ where
 /// Update the configuration of a single connection profile.
 ///
 /// A builder for the *locations.connectionProfiles.patch* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -3164,7 +3345,7 @@ where
 /// use datamigration1::api::ConnectionProfile;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3181,8 +3362,8 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_connection_profiles_patch(req, "name")
-///              .update_mask("sed")
-///              .request_id("ut")
+///              .update_mask(&Default::default())
+///              .request_id("sed")
 ///              .doit().await;
 /// # }
 /// ```
@@ -3192,18 +3373,18 @@ pub struct ProjectLocationConnectionProfilePatchCall<'a, S>
     hub: &'a DatabaseMigrationService<S>,
     _request: ConnectionProfile,
     _name: String,
-    _update_mask: Option<String>,
+    _update_mask: Option<client::FieldMask>,
     _request_id: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationConnectionProfilePatchCall<'a, S> {}
 
 impl<'a, S> ProjectLocationConnectionProfilePatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -3212,70 +3393,51 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Operation)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.connectionProfiles.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._update_mask {
-            params.push(("updateMask", value.to_string()));
-        }
-        if let Some(value) = self._request_id {
-            params.push(("requestId", value.to_string()));
-        }
+
         for &field in ["alt", "name", "updateMask", "requestId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._update_mask.as_ref() {
+            params.push("updateMask", value.to_string());
+        }
+        if let Some(value) = self._request_id.as_ref() {
+            params.push("requestId", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -3289,14 +3451,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -3305,23 +3467,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -3337,7 +3505,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -3390,8 +3558,8 @@ where
     /// Required. Field mask is used to specify the fields to be overwritten in the connection profile resource by the update.
     ///
     /// Sets the *update mask* query property to the given value.
-    pub fn update_mask(mut self, new_value: &str) -> ProjectLocationConnectionProfilePatchCall<'a, S> {
-        self._update_mask = Some(new_value.to_string());
+    pub fn update_mask(mut self, new_value: client::FieldMask) -> ProjectLocationConnectionProfilePatchCall<'a, S> {
+        self._update_mask = Some(new_value);
         self
     }
     /// A unique id used to identify the request. If the server receives two requests with the same id, then the second request will be ignored. It is recommended to always set this value to a UUID. The id must contain only letters (a-z, A-Z), numbers (0-9), underscores (_), and hyphens (-). The maximum length is 40 characters.
@@ -3404,7 +3572,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationConnectionProfilePatchCall<'a, S> {
@@ -3440,25 +3609,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationConnectionProfilePatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationConnectionProfilePatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationConnectionProfilePatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationConnectionProfilePatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -3467,7 +3647,7 @@ where
 /// Sets the access control policy on the specified resource. Replaces any existing policy. Can return `NOT_FOUND`, `INVALID_ARGUMENT`, and `PERMISSION_DENIED` errors.
 ///
 /// A builder for the *locations.connectionProfiles.setIamPolicy* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -3480,7 +3660,7 @@ where
 /// use datamigration1::api::SetIamPolicyRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3508,14 +3688,14 @@ pub struct ProjectLocationConnectionProfileSetIamPolicyCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationConnectionProfileSetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationConnectionProfileSetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -3524,64 +3704,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.connectionProfiles.setIamPolicy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:setIamPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -3595,14 +3756,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -3611,23 +3772,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -3643,7 +3810,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -3696,7 +3863,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationConnectionProfileSetIamPolicyCall<'a, S> {
@@ -3732,25 +3900,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationConnectionProfileSetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationConnectionProfileSetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationConnectionProfileSetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationConnectionProfileSetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -3759,7 +3938,7 @@ where
 /// Returns permissions that a caller has on the specified resource. If the resource does not exist, this will return an empty set of permissions, not a `NOT_FOUND` error. Note: This operation is designed to be used for building permission-aware UIs and command-line tools, not for authorization checking. This operation may "fail open" without warning.
 ///
 /// A builder for the *locations.connectionProfiles.testIamPermissions* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -3772,7 +3951,7 @@ where
 /// use datamigration1::api::TestIamPermissionsRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3800,14 +3979,14 @@ pub struct ProjectLocationConnectionProfileTestIamPermissionCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationConnectionProfileTestIamPermissionCall<'a, S> {}
 
 impl<'a, S> ProjectLocationConnectionProfileTestIamPermissionCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -3816,64 +3995,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, TestIamPermissionsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.connectionProfiles.testIamPermissions",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:testIamPermissions";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -3887,14 +4047,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -3903,23 +4063,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -3935,7 +4101,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -3988,7 +4154,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationConnectionProfileTestIamPermissionCall<'a, S> {
@@ -4024,25 +4191,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationConnectionProfileTestIamPermissionCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationConnectionProfileTestIamPermissionCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationConnectionProfileTestIamPermissionCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationConnectionProfileTestIamPermissionCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -4051,7 +4229,7 @@ where
 /// Creates a new migration job in a given project and location.
 ///
 /// A builder for the *locations.migrationJobs.create* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -4064,7 +4242,7 @@ where
 /// use datamigration1::api::MigrationJob;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4081,7 +4259,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_migration_jobs_create(req, "parent")
-///              .request_id("ipsum")
+///              .request_id("est")
 ///              .migration_job_id("ipsum")
 ///              .doit().await;
 /// # }
@@ -4096,14 +4274,14 @@ pub struct ProjectLocationMigrationJobCreateCall<'a, S>
     _migration_job_id: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobCreateCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobCreateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -4112,70 +4290,51 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Operation)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.create",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._request_id {
-            params.push(("requestId", value.to_string()));
-        }
-        if let Some(value) = self._migration_job_id {
-            params.push(("migrationJobId", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "requestId", "migrationJobId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._request_id.as_ref() {
+            params.push("requestId", value);
+        }
+        if let Some(value) = self._migration_job_id.as_ref() {
+            params.push("migrationJobId", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/migrationJobs";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -4189,14 +4348,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -4205,23 +4364,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -4237,7 +4402,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -4304,7 +4469,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobCreateCall<'a, S> {
@@ -4340,25 +4506,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobCreateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobCreateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobCreateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobCreateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -4367,7 +4544,7 @@ where
 /// Deletes a single migration job.
 ///
 /// A builder for the *locations.migrationJobs.delete* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -4379,7 +4556,7 @@ where
 /// # extern crate google_datamigration1 as datamigration1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4391,8 +4568,8 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_migration_jobs_delete("name")
-///              .request_id("gubergren")
-///              .force(false)
+///              .request_id("est")
+///              .force(true)
 ///              .doit().await;
 /// # }
 /// ```
@@ -4405,14 +4582,14 @@ pub struct ProjectLocationMigrationJobDeleteCall<'a, S>
     _force: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobDeleteCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -4421,80 +4598,61 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Operation)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._request_id {
-            params.push(("requestId", value.to_string()));
-        }
-        if let Some(value) = self._force {
-            params.push(("force", value.to_string()));
-        }
+
         for &field in ["alt", "name", "requestId", "force"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._request_id.as_ref() {
+            params.push("requestId", value);
+        }
+        if let Some(value) = self._force.as_ref() {
+            params.push("force", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -4502,21 +4660,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -4532,7 +4696,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -4590,7 +4754,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobDeleteCall<'a, S> {
@@ -4626,25 +4791,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -4653,7 +4829,7 @@ where
 /// Generate a SSH configuration script to configure the reverse SSH connectivity.
 ///
 /// A builder for the *locations.migrationJobs.generateSshScript* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -4666,7 +4842,7 @@ where
 /// use datamigration1::api::GenerateSshScriptRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4694,14 +4870,14 @@ pub struct ProjectLocationMigrationJobGenerateSshScriptCall<'a, S>
     _migration_job: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobGenerateSshScriptCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobGenerateSshScriptCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -4710,64 +4886,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, SshScript)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.generateSshScript",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("migrationJob", self._migration_job.to_string()));
+
         for &field in ["alt", "migrationJob"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("migrationJob", self._migration_job);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+migrationJob}:generateSshScript";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+migrationJob}", "migrationJob")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["migrationJob"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["migrationJob"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -4781,14 +4938,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -4797,23 +4954,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -4829,7 +4992,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -4882,7 +5045,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobGenerateSshScriptCall<'a, S> {
@@ -4918,25 +5082,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobGenerateSshScriptCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobGenerateSshScriptCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobGenerateSshScriptCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobGenerateSshScriptCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -4945,7 +5120,7 @@ where
 /// Gets details of a single migration job.
 ///
 /// A builder for the *locations.migrationJobs.get* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -4957,7 +5132,7 @@ where
 /// # extern crate google_datamigration1 as datamigration1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4979,14 +5154,14 @@ pub struct ProjectLocationMigrationJobGetCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobGetCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -4995,74 +5170,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, MigrationJob)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -5070,21 +5226,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -5100,7 +5262,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5144,7 +5306,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobGetCall<'a, S> {
@@ -5180,25 +5343,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5207,7 +5381,7 @@ where
 /// Gets the access control policy for a resource. Returns an empty policy if the resource exists and does not have a policy set.
 ///
 /// A builder for the *locations.migrationJobs.getIamPolicy* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -5219,7 +5393,7 @@ where
 /// # extern crate google_datamigration1 as datamigration1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5231,7 +5405,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_migration_jobs_get_iam_policy("resource")
-///              .options_requested_policy_version(-43)
+///              .options_requested_policy_version(-25)
 ///              .doit().await;
 /// # }
 /// ```
@@ -5243,14 +5417,14 @@ pub struct ProjectLocationMigrationJobGetIamPolicyCall<'a, S>
     _options_requested_policy_version: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobGetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobGetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -5259,77 +5433,58 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.getIamPolicy",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
-        if let Some(value) = self._options_requested_policy_version {
-            params.push(("options.requestedPolicyVersion", value.to_string()));
-        }
+
         for &field in ["alt", "resource", "options.requestedPolicyVersion"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
+        if let Some(value) = self._options_requested_policy_version.as_ref() {
+            params.push("options.requestedPolicyVersion", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:getIamPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -5337,21 +5492,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -5367,7 +5528,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5418,7 +5579,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobGetIamPolicyCall<'a, S> {
@@ -5454,25 +5616,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobGetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobGetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobGetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobGetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5481,7 +5654,7 @@ where
 /// Lists migration jobs in a given project and location.
 ///
 /// A builder for the *locations.migrationJobs.list* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -5493,7 +5666,7 @@ where
 /// # extern crate google_datamigration1 as datamigration1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5506,9 +5679,9 @@ where
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_migration_jobs_list("parent")
 ///              .page_token("sed")
-///              .page_size(-61)
-///              .order_by("Stet")
-///              .filter("kasd")
+///              .page_size(-70)
+///              .order_by("sed")
+///              .filter("no")
 ///              .doit().await;
 /// # }
 /// ```
@@ -5523,14 +5696,14 @@ pub struct ProjectLocationMigrationJobListCall<'a, S>
     _filter: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobListCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -5539,86 +5712,67 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ListMigrationJobsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
-        if let Some(value) = self._order_by {
-            params.push(("orderBy", value.to_string()));
-        }
-        if let Some(value) = self._filter {
-            params.push(("filter", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "pageToken", "pageSize", "orderBy", "filter"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
+        }
+        if let Some(value) = self._order_by.as_ref() {
+            params.push("orderBy", value);
+        }
+        if let Some(value) = self._filter.as_ref() {
+            params.push("filter", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/migrationJobs";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -5626,21 +5780,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -5656,7 +5816,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5728,7 +5888,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobListCall<'a, S> {
@@ -5764,25 +5925,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5791,7 +5963,7 @@ where
 /// Updates the parameters of a single migration job.
 ///
 /// A builder for the *locations.migrationJobs.patch* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -5804,7 +5976,7 @@ where
 /// use datamigration1::api::MigrationJob;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5821,8 +5993,8 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_migration_jobs_patch(req, "name")
-///              .update_mask("sed")
-///              .request_id("et")
+///              .update_mask(&Default::default())
+///              .request_id("kasd")
 ///              .doit().await;
 /// # }
 /// ```
@@ -5832,18 +6004,18 @@ pub struct ProjectLocationMigrationJobPatchCall<'a, S>
     hub: &'a DatabaseMigrationService<S>,
     _request: MigrationJob,
     _name: String,
-    _update_mask: Option<String>,
+    _update_mask: Option<client::FieldMask>,
     _request_id: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobPatchCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -5852,70 +6024,51 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Operation)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._update_mask {
-            params.push(("updateMask", value.to_string()));
-        }
-        if let Some(value) = self._request_id {
-            params.push(("requestId", value.to_string()));
-        }
+
         for &field in ["alt", "name", "updateMask", "requestId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._update_mask.as_ref() {
+            params.push("updateMask", value.to_string());
+        }
+        if let Some(value) = self._request_id.as_ref() {
+            params.push("requestId", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -5929,14 +6082,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -5945,23 +6098,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -5977,7 +6136,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -6030,8 +6189,8 @@ where
     /// Required. Field mask is used to specify the fields to be overwritten in the migration job resource by the update.
     ///
     /// Sets the *update mask* query property to the given value.
-    pub fn update_mask(mut self, new_value: &str) -> ProjectLocationMigrationJobPatchCall<'a, S> {
-        self._update_mask = Some(new_value.to_string());
+    pub fn update_mask(mut self, new_value: client::FieldMask) -> ProjectLocationMigrationJobPatchCall<'a, S> {
+        self._update_mask = Some(new_value);
         self
     }
     /// A unique id used to identify the request. If the server receives two requests with the same id, then the second request will be ignored. It is recommended to always set this value to a UUID. The id must contain only letters (a-z, A-Z), numbers (0-9), underscores (_), and hyphens (-). The maximum length is 40 characters.
@@ -6044,7 +6203,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobPatchCall<'a, S> {
@@ -6080,25 +6240,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -6107,7 +6278,7 @@ where
 /// Promote a migration job, stopping replication to the destination and promoting the destination to be a standalone database.
 ///
 /// A builder for the *locations.migrationJobs.promote* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -6120,7 +6291,7 @@ where
 /// use datamigration1::api::PromoteMigrationJobRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -6148,14 +6319,14 @@ pub struct ProjectLocationMigrationJobPromoteCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobPromoteCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobPromoteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -6164,64 +6335,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Operation)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.promote",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:promote";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -6235,14 +6387,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -6251,23 +6403,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -6283,7 +6441,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -6336,7 +6494,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobPromoteCall<'a, S> {
@@ -6372,25 +6531,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobPromoteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobPromoteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobPromoteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobPromoteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -6399,7 +6569,7 @@ where
 /// Restart a stopped or failed migration job, resetting the destination instance to its original state and starting the migration process from scratch.
 ///
 /// A builder for the *locations.migrationJobs.restart* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -6412,7 +6582,7 @@ where
 /// use datamigration1::api::RestartMigrationJobRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -6440,14 +6610,14 @@ pub struct ProjectLocationMigrationJobRestartCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobRestartCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobRestartCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -6456,64 +6626,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Operation)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.restart",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:restart";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -6527,14 +6678,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -6543,23 +6694,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -6575,7 +6732,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -6628,7 +6785,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobRestartCall<'a, S> {
@@ -6664,25 +6822,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobRestartCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobRestartCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobRestartCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobRestartCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -6691,7 +6860,7 @@ where
 /// Resume a migration job that is currently stopped and is resumable (was stopped during CDC phase).
 ///
 /// A builder for the *locations.migrationJobs.resume* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -6704,7 +6873,7 @@ where
 /// use datamigration1::api::ResumeMigrationJobRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -6732,14 +6901,14 @@ pub struct ProjectLocationMigrationJobResumeCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobResumeCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobResumeCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -6748,64 +6917,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Operation)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.resume",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:resume";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -6819,14 +6969,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -6835,23 +6985,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -6867,7 +7023,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -6920,7 +7076,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobResumeCall<'a, S> {
@@ -6956,25 +7113,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobResumeCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobResumeCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobResumeCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobResumeCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -6983,7 +7151,7 @@ where
 /// Sets the access control policy on the specified resource. Replaces any existing policy. Can return `NOT_FOUND`, `INVALID_ARGUMENT`, and `PERMISSION_DENIED` errors.
 ///
 /// A builder for the *locations.migrationJobs.setIamPolicy* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -6996,7 +7164,7 @@ where
 /// use datamigration1::api::SetIamPolicyRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7024,14 +7192,14 @@ pub struct ProjectLocationMigrationJobSetIamPolicyCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobSetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobSetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7040,64 +7208,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.setIamPolicy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:setIamPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -7111,14 +7260,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -7127,23 +7276,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -7159,7 +7314,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -7212,7 +7367,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobSetIamPolicyCall<'a, S> {
@@ -7248,25 +7404,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobSetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobSetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobSetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobSetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7275,7 +7442,7 @@ where
 /// Start an already created migration job.
 ///
 /// A builder for the *locations.migrationJobs.start* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -7288,7 +7455,7 @@ where
 /// use datamigration1::api::StartMigrationJobRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7316,14 +7483,14 @@ pub struct ProjectLocationMigrationJobStartCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobStartCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobStartCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7332,64 +7499,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Operation)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.start",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:start";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -7403,14 +7551,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -7419,23 +7567,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -7451,7 +7605,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -7504,7 +7658,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobStartCall<'a, S> {
@@ -7540,25 +7695,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobStartCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobStartCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobStartCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobStartCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7567,7 +7733,7 @@ where
 /// Stops a running migration job.
 ///
 /// A builder for the *locations.migrationJobs.stop* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -7580,7 +7746,7 @@ where
 /// use datamigration1::api::StopMigrationJobRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7608,14 +7774,14 @@ pub struct ProjectLocationMigrationJobStopCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobStopCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobStopCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7624,64 +7790,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Operation)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.stop",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:stop";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -7695,14 +7842,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -7711,23 +7858,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -7743,7 +7896,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -7796,7 +7949,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobStopCall<'a, S> {
@@ -7832,25 +7986,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobStopCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobStopCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobStopCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobStopCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7859,7 +8024,7 @@ where
 /// Returns permissions that a caller has on the specified resource. If the resource does not exist, this will return an empty set of permissions, not a `NOT_FOUND` error. Note: This operation is designed to be used for building permission-aware UIs and command-line tools, not for authorization checking. This operation may "fail open" without warning.
 ///
 /// A builder for the *locations.migrationJobs.testIamPermissions* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -7872,7 +8037,7 @@ where
 /// use datamigration1::api::TestIamPermissionsRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7900,14 +8065,14 @@ pub struct ProjectLocationMigrationJobTestIamPermissionCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobTestIamPermissionCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobTestIamPermissionCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7916,64 +8081,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, TestIamPermissionsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.testIamPermissions",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:testIamPermissions";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -7987,14 +8133,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8003,23 +8149,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8035,7 +8187,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8088,7 +8240,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobTestIamPermissionCall<'a, S> {
@@ -8124,25 +8277,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobTestIamPermissionCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobTestIamPermissionCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobTestIamPermissionCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobTestIamPermissionCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8151,7 +8315,7 @@ where
 /// Verify a migration job, making sure the destination can reach the source and that all configuration and prerequisites are met.
 ///
 /// A builder for the *locations.migrationJobs.verify* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -8164,7 +8328,7 @@ where
 /// use datamigration1::api::VerifyMigrationJobRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8192,14 +8356,14 @@ pub struct ProjectLocationMigrationJobVerifyCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationMigrationJobVerifyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationMigrationJobVerifyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8208,64 +8372,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Operation)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.migrationJobs.verify",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:verify";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -8279,14 +8424,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8295,23 +8440,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8327,7 +8478,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8380,7 +8531,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationMigrationJobVerifyCall<'a, S> {
@@ -8416,25 +8568,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationMigrationJobVerifyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationMigrationJobVerifyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationMigrationJobVerifyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationMigrationJobVerifyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8443,7 +8606,7 @@ where
 /// Starts asynchronous cancellation on a long-running operation. The server makes a best effort to cancel the operation, but success is not guaranteed. If the server doesn't support this method, it returns `google.rpc.Code.UNIMPLEMENTED`. Clients can use Operations.GetOperation or other methods to check whether the cancellation succeeded or whether the operation completed despite cancellation. On successful cancellation, the operation is not deleted; instead, it becomes an operation with an Operation.error value with a google.rpc.Status.code of 1, corresponding to `Code.CANCELLED`.
 ///
 /// A builder for the *locations.operations.cancel* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -8456,7 +8619,7 @@ where
 /// use datamigration1::api::CancelOperationRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8484,14 +8647,14 @@ pub struct ProjectLocationOperationCancelCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationOperationCancelCall<'a, S> {}
 
 impl<'a, S> ProjectLocationOperationCancelCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8500,64 +8663,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Empty)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.operations.cancel",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:cancel";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -8571,14 +8715,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8587,23 +8731,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8619,7 +8769,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8672,7 +8822,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationOperationCancelCall<'a, S> {
@@ -8708,25 +8859,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationOperationCancelCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationOperationCancelCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationOperationCancelCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationOperationCancelCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8735,7 +8897,7 @@ where
 /// Deletes a long-running operation. This method indicates that the client is no longer interested in the operation result. It does not cancel the operation. If the server doesn't support this method, it returns `google.rpc.Code.UNIMPLEMENTED`.
 ///
 /// A builder for the *locations.operations.delete* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -8747,7 +8909,7 @@ where
 /// # extern crate google_datamigration1 as datamigration1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8769,14 +8931,14 @@ pub struct ProjectLocationOperationDeleteCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationOperationDeleteCall<'a, S> {}
 
 impl<'a, S> ProjectLocationOperationDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8785,74 +8947,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Empty)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.operations.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8860,21 +9003,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8890,7 +9039,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8934,7 +9083,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationOperationDeleteCall<'a, S> {
@@ -8970,25 +9120,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationOperationDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationOperationDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationOperationDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationOperationDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8997,7 +9158,7 @@ where
 /// Gets the latest state of a long-running operation. Clients can use this method to poll the operation result at intervals as recommended by the API service.
 ///
 /// A builder for the *locations.operations.get* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -9009,7 +9170,7 @@ where
 /// # extern crate google_datamigration1 as datamigration1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -9031,14 +9192,14 @@ pub struct ProjectLocationOperationGetCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationOperationGetCall<'a, S> {}
 
 impl<'a, S> ProjectLocationOperationGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9047,74 +9208,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Operation)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.operations.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9122,21 +9264,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9152,7 +9300,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9196,7 +9344,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationOperationGetCall<'a, S> {
@@ -9232,25 +9381,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationOperationGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationOperationGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationOperationGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationOperationGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -9259,7 +9419,7 @@ where
 /// Lists operations that match the specified filter in the request. If the server doesn't support this method, it returns `UNIMPLEMENTED`. NOTE: the `name` binding allows API services to override the binding to use different resource name schemes, such as `users/*/operations`. To override the binding, API services can add a binding such as `"/v1/{name=users/*}/operations"` to their service configuration. For backwards compatibility, the default name includes the operations collection id, however overriding users must ensure the name binding is the parent resource, without the operations collection id.
 ///
 /// A builder for the *locations.operations.list* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -9271,7 +9431,7 @@ where
 /// # extern crate google_datamigration1 as datamigration1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -9283,9 +9443,9 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_operations_list("name")
-///              .page_token("et")
-///              .page_size(-22)
-///              .filter("sadipscing")
+///              .page_token("consetetur")
+///              .page_size(-92)
+///              .filter("dolor")
 ///              .doit().await;
 /// # }
 /// ```
@@ -9299,14 +9459,14 @@ pub struct ProjectLocationOperationListCall<'a, S>
     _filter: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationOperationListCall<'a, S> {}
 
 impl<'a, S> ProjectLocationOperationListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9315,83 +9475,64 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ListOperationsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.operations.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
-        if let Some(value) = self._filter {
-            params.push(("filter", value.to_string()));
-        }
+
         for &field in ["alt", "name", "pageToken", "pageSize", "filter"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
+        }
+        if let Some(value) = self._filter.as_ref() {
+            params.push("filter", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}/operations";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9399,21 +9540,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9429,7 +9576,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9494,7 +9641,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationOperationListCall<'a, S> {
@@ -9530,25 +9678,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationOperationListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationOperationListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationOperationListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationOperationListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -9557,7 +9716,7 @@ where
 /// Gets information about a location.
 ///
 /// A builder for the *locations.get* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -9569,7 +9728,7 @@ where
 /// # extern crate google_datamigration1 as datamigration1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -9591,14 +9750,14 @@ pub struct ProjectLocationGetCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationGetCall<'a, S> {}
 
 impl<'a, S> ProjectLocationGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9607,74 +9766,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Location)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9682,21 +9822,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9712,7 +9858,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9756,7 +9902,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationGetCall<'a, S> {
@@ -9792,25 +9939,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -9819,7 +9977,7 @@ where
 /// Lists information about the supported locations for this service.
 ///
 /// A builder for the *locations.list* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -9831,7 +9989,7 @@ where
 /// # extern crate google_datamigration1 as datamigration1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls};
+/// # use datamigration1::{DatabaseMigrationService, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -9843,9 +10001,9 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_list("name")
-///              .page_token("duo")
-///              .page_size(-76)
-///              .filter("vero")
+///              .page_token("sadipscing")
+///              .page_size(-15)
+///              .filter("dolor")
 ///              .doit().await;
 /// # }
 /// ```
@@ -9859,14 +10017,14 @@ pub struct ProjectLocationListCall<'a, S>
     _filter: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationListCall<'a, S> {}
 
 impl<'a, S> ProjectLocationListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9875,83 +10033,64 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ListLocationsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datamigration.projects.locations.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
-        if let Some(value) = self._filter {
-            params.push(("filter", value.to_string()));
-        }
+
         for &field in ["alt", "name", "pageToken", "pageSize", "filter"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
+        }
+        if let Some(value) = self._filter.as_ref() {
+            params.push("filter", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}/locations";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9959,21 +10098,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9989,7 +10134,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -10054,7 +10199,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationListCall<'a, S> {
@@ -10090,25 +10236,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }

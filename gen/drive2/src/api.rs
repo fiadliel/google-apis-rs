@@ -1,19 +1,20 @@
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::default::Default;
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::error::Error as StdError;
 use serde_json as json;
 use std::io;
 use std::fs;
 use std::mem;
-use std::thread::sleep;
 
-use http::Uri;
 use hyper::client::connect;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::time::sleep;
 use tower_service;
-use crate::client;
+use serde::{Serialize, Deserialize};
+
+use crate::{client, client::GetToken, client::serde_with};
 
 // ##############
 // UTILITIES ###
@@ -94,7 +95,7 @@ impl Default for Scope {
 /// use drive2::{Result, Error};
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// // Get an ApplicationSecret instance by some means. It contains the `client_id` and 
 /// // `client_secret`, among other things.
@@ -159,7 +160,7 @@ impl Default for Scope {
 #[derive(Clone)]
 pub struct DriveHub<S> {
     pub client: hyper::Client<S, hyper::body::Body>,
-    pub auth: oauth2::authenticator::Authenticator<S>,
+    pub auth: Box<dyn client::GetToken>,
     _user_agent: String,
     _base_url: String,
     _root_url: String,
@@ -169,11 +170,11 @@ impl<'a, S> client::Hub for DriveHub<S> {}
 
 impl<'a, S> DriveHub<S> {
 
-    pub fn new(client: hyper::Client<S, hyper::body::Body>, authenticator: oauth2::authenticator::Authenticator<S>) -> DriveHub<S> {
+    pub fn new<A: 'static + client::GetToken>(client: hyper::Client<S, hyper::body::Body>, auth: A) -> DriveHub<S> {
         DriveHub {
             client,
-            auth: authenticator,
-            _user_agent: "google-api-rust-client/4.0.1".to_string(),
+            auth: Box::new(auth),
+            _user_agent: "google-api-rust-client/5.0.2-beta-1".to_string(),
             _base_url: "https://www.googleapis.com/drive/v2/".to_string(),
             _root_url: "https://www.googleapis.com/".to_string(),
         }
@@ -191,8 +192,8 @@ impl<'a, S> DriveHub<S> {
     pub fn channels(&'a self) -> ChannelMethods<'a, S> {
         ChannelMethods { hub: &self }
     }
-    pub fn children(&'a self) -> ChildrenMethods<'a, S> {
-        ChildrenMethods { hub: &self }
+    pub fn children(&'a self) -> ChildMethods<'a, S> {
+        ChildMethods { hub: &self }
     }
     pub fn comments(&'a self) -> CommentMethods<'a, S> {
         CommentMethods { hub: &self }
@@ -223,7 +224,7 @@ impl<'a, S> DriveHub<S> {
     }
 
     /// Set the user-agent header field to use in all requests to the server.
-    /// It defaults to `google-api-rust-client/4.0.1`.
+    /// It defaults to `google-api-rust-client/5.0.2-beta-1`.
     ///
     /// Returns the previously set user-agent.
     pub fn user_agent(&mut self, agent_name: String) -> String {
@@ -260,16 +261,20 @@ impl<'a, S> DriveHub<S> {
 /// 
 /// * [get about](AboutGetCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct About {
     /// Information about supported additional roles per file type. The most specific type takes precedence.
     #[serde(rename="additionalRoleInfo")]
+    
     pub additional_role_info: Option<Vec<AboutAdditionalRoleInfo>>,
     /// Whether the user can create shared drives.
     #[serde(rename="canCreateDrives")]
+    
     pub can_create_drives: Option<bool>,
     /// Deprecated - use canCreateDrives instead.
     #[serde(rename="canCreateTeamDrives")]
+    
     pub can_create_team_drives: Option<bool>,
     /// The domain sharing policy for the current user. Possible values are:  
     /// - allowed 
@@ -277,75 +282,106 @@ pub struct About {
     /// - incomingOnly 
     /// - disallowed
     #[serde(rename="domainSharingPolicy")]
+    
     pub domain_sharing_policy: Option<String>,
     /// A list of themes that are supported for shared drives.
     #[serde(rename="driveThemes")]
+    
     pub drive_themes: Option<Vec<AboutDriveThemes>>,
     /// The ETag of the item.
+    
     pub etag: Option<String>,
     /// The allowable export formats.
     #[serde(rename="exportFormats")]
+    
     pub export_formats: Option<Vec<AboutExportFormats>>,
     /// List of additional features enabled on this account.
+    
     pub features: Option<Vec<AboutFeatures>>,
     /// The palette of allowable folder colors as RGB hex strings.
     #[serde(rename="folderColorPalette")]
+    
     pub folder_color_palette: Option<Vec<String>>,
     /// The allowable import formats.
     #[serde(rename="importFormats")]
+    
     pub import_formats: Option<Vec<AboutImportFormats>>,
     /// A boolean indicating whether the authenticated app is installed by the authenticated user.
     #[serde(rename="isCurrentAppInstalled")]
+    
     pub is_current_app_installed: Option<bool>,
     /// This is always drive#about.
+    
     pub kind: Option<String>,
     /// The user's language or locale code, as defined by BCP 47, with some extensions from Unicode's LDML format (http://www.unicode.org/reports/tr35/).
     #[serde(rename="languageCode")]
+    
     pub language_code: Option<String>,
     /// The largest change id.
     #[serde(rename="largestChangeId")]
-    pub largest_change_id: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub largest_change_id: Option<i64>,
     /// List of max upload sizes for each file type. The most specific type takes precedence.
     #[serde(rename="maxUploadSizes")]
+    
     pub max_upload_sizes: Option<Vec<AboutMaxUploadSizes>>,
     /// The name of the current user.
+    
     pub name: Option<String>,
     /// The current user's ID as visible in the permissions collection.
     #[serde(rename="permissionId")]
+    
     pub permission_id: Option<String>,
     /// The amount of storage quota used by different Google services.
     #[serde(rename="quotaBytesByService")]
+    
     pub quota_bytes_by_service: Option<Vec<AboutQuotaBytesByService>>,
     /// The total number of quota bytes. This is only relevant when quotaType is LIMITED.
     #[serde(rename="quotaBytesTotal")]
-    pub quota_bytes_total: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub quota_bytes_total: Option<i64>,
     /// The number of quota bytes used by Google Drive.
     #[serde(rename="quotaBytesUsed")]
-    pub quota_bytes_used: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub quota_bytes_used: Option<i64>,
     /// The number of quota bytes used by all Google apps (Drive, Picasa, etc.).
     #[serde(rename="quotaBytesUsedAggregate")]
-    pub quota_bytes_used_aggregate: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub quota_bytes_used_aggregate: Option<i64>,
     /// The number of quota bytes used by trashed items.
     #[serde(rename="quotaBytesUsedInTrash")]
-    pub quota_bytes_used_in_trash: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub quota_bytes_used_in_trash: Option<i64>,
     /// The type of the user's storage quota. Possible values are:  
     /// - LIMITED 
     /// - UNLIMITED
     #[serde(rename="quotaType")]
+    
     pub quota_type: Option<String>,
     /// The number of remaining change ids, limited to no more than 2500.
     #[serde(rename="remainingChangeIds")]
-    pub remaining_change_ids: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub remaining_change_ids: Option<i64>,
     /// The id of the root folder.
     #[serde(rename="rootFolderId")]
+    
     pub root_folder_id: Option<String>,
     /// A link back to this item.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
     /// Deprecated - use driveThemes instead.
     #[serde(rename="teamDriveThemes")]
+    
     pub team_drive_themes: Option<Vec<AboutTeamDriveThemes>>,
     /// The authenticated user.
+    
     pub user: Option<User>,
 }
 
@@ -362,73 +398,98 @@ impl client::ResponseResult for About {}
 /// * [get apps](AppGetCall) (response)
 /// * [list apps](AppListCall) (none)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct App {
     /// Whether the app is authorized to access data on the user's Drive.
+    
     pub authorized: Option<bool>,
     /// The template url to create a new file with this app in a given folder. The template will contain {folderId} to be replaced by the folder to create the new file in.
     #[serde(rename="createInFolderTemplate")]
+    
     pub create_in_folder_template: Option<String>,
     /// The url to create a new file with this app.
     #[serde(rename="createUrl")]
+    
     pub create_url: Option<String>,
     /// Whether the app has drive-wide scope. An app with drive-wide scope can access all files in the user's drive.
     #[serde(rename="hasDriveWideScope")]
+    
     pub has_drive_wide_scope: Option<bool>,
     /// The various icons for the app.
+    
     pub icons: Option<Vec<AppIcons>>,
     /// The ID of the app.
+    
     pub id: Option<String>,
     /// Whether the app is installed.
+    
     pub installed: Option<bool>,
     /// This is always drive#app.
+    
     pub kind: Option<String>,
     /// A long description of the app.
     #[serde(rename="longDescription")]
+    
     pub long_description: Option<String>,
     /// The name of the app.
+    
     pub name: Option<String>,
     /// The type of object this app creates (e.g. Chart). If empty, the app name should be used instead.
     #[serde(rename="objectType")]
+    
     pub object_type: Option<String>,
     /// The template url for opening files with this app. The template will contain {ids} and/or {exportIds} to be replaced by the actual file ids. See  Open Files  for the full documentation.
     #[serde(rename="openUrlTemplate")]
+    
     pub open_url_template: Option<String>,
     /// The list of primary file extensions.
     #[serde(rename="primaryFileExtensions")]
+    
     pub primary_file_extensions: Option<Vec<String>>,
     /// The list of primary mime types.
     #[serde(rename="primaryMimeTypes")]
+    
     pub primary_mime_types: Option<Vec<String>>,
     /// The ID of the product listing for this app.
     #[serde(rename="productId")]
+    
     pub product_id: Option<String>,
     /// A link to the product listing for this app.
     #[serde(rename="productUrl")]
+    
     pub product_url: Option<String>,
     /// The list of secondary file extensions.
     #[serde(rename="secondaryFileExtensions")]
+    
     pub secondary_file_extensions: Option<Vec<String>>,
     /// The list of secondary mime types.
     #[serde(rename="secondaryMimeTypes")]
+    
     pub secondary_mime_types: Option<Vec<String>>,
     /// A short description of the app.
     #[serde(rename="shortDescription")]
+    
     pub short_description: Option<String>,
     /// Whether this app supports creating new objects.
     #[serde(rename="supportsCreate")]
+    
     pub supports_create: Option<bool>,
     /// Whether this app supports importing from Docs Editors.
     #[serde(rename="supportsImport")]
+    
     pub supports_import: Option<bool>,
     /// Whether this app supports opening more than one file.
     #[serde(rename="supportsMultiOpen")]
+    
     pub supports_multi_open: Option<bool>,
     /// Whether this app supports creating new files when offline.
     #[serde(rename="supportsOfflineCreate")]
+    
     pub supports_offline_create: Option<bool>,
     /// Whether the app is selected as the default handler for the types it supports.
     #[serde(rename="useByDefault")]
+    
     pub use_by_default: Option<bool>,
 }
 
@@ -445,19 +506,25 @@ impl client::ResponseResult for App {}
 /// 
 /// * [list apps](AppListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct AppList {
     /// List of app IDs that the user has specified to use by default. The list is in reverse-priority order (lowest to highest).
     #[serde(rename="defaultAppIds")]
+    
     pub default_app_ids: Option<Vec<String>>,
     /// The ETag of the list.
+    
     pub etag: Option<String>,
     /// The list of apps.
+    
     pub items: Option<Vec<App>>,
     /// This is always drive#appList.
+    
     pub kind: Option<String>,
     /// A link back to this list.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -476,41 +543,56 @@ impl client::ResponseResult for AppList {}
 /// * [list changes](ChangeListCall) (none)
 /// * [watch changes](ChangeWatchCall) (none)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Change {
     /// The type of the change. Possible values are file and drive.
     #[serde(rename="changeType")]
+    
     pub change_type: Option<String>,
     /// Whether the file or shared drive has been removed from this list of changes, for example by deletion or loss of access.
+    
     pub deleted: Option<bool>,
     /// The updated state of the shared drive. Present if the changeType is drive, the user is still a member of the shared drive, and the shared drive has not been deleted.
+    
     pub drive: Option<Drive>,
     /// The ID of the shared drive associated with this change.
     #[serde(rename="driveId")]
+    
     pub drive_id: Option<String>,
     /// The updated state of the file. Present if the type is file and the file has not been removed from this list of changes.
+    
     pub file: Option<File>,
     /// The ID of the file associated with this change.
     #[serde(rename="fileId")]
+    
     pub file_id: Option<String>,
     /// The ID of the change.
-    pub id: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub id: Option<i64>,
     /// This is always drive#change.
+    
     pub kind: Option<String>,
     /// The time of this modification.
     #[serde(rename="modificationDate")]
-    pub modification_date: Option<String>,
+    
+    pub modification_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// A link back to this change.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
     /// Deprecated - use drive instead.
     #[serde(rename="teamDrive")]
+    
     pub team_drive: Option<TeamDrive>,
     /// Deprecated - use driveId instead.
     #[serde(rename="teamDriveId")]
+    
     pub team_drive_id: Option<String>,
     /// Deprecated - use changeType instead.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -527,28 +609,38 @@ impl client::ResponseResult for Change {}
 /// 
 /// * [list changes](ChangeListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ChangeList {
     /// The ETag of the list.
+    
     pub etag: Option<String>,
     /// The list of changes. If nextPageToken is populated, then this list may be incomplete and an additional page of results should be fetched.
+    
     pub items: Option<Vec<Change>>,
     /// This is always drive#changeList.
+    
     pub kind: Option<String>,
     /// The current largest change ID.
     #[serde(rename="largestChangeId")]
-    pub largest_change_id: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub largest_change_id: Option<i64>,
     /// The starting page token for future changes. This will be present only if the end of the current changes list has been reached.
     #[serde(rename="newStartPageToken")]
+    
     pub new_start_page_token: Option<String>,
     /// A link to the next page of changes.
     #[serde(rename="nextLink")]
+    
     pub next_link: Option<String>,
     /// The page token for the next page of changes. This will be absent if the end of the changes list has been reached. If the token is rejected for any reason, it should be discarded, and pagination should be restarted from the first page of results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// A link back to this list.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -566,30 +658,42 @@ impl client::ResponseResult for ChangeList {}
 /// * [stop channels](ChannelStopCall) (request)
 /// * [watch files](FileWatchCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Channel {
     /// The address where notifications are delivered for this channel.
+    
     pub address: Option<String>,
     /// Date and time of notification channel expiration, expressed as a Unix timestamp, in milliseconds. Optional.
-    pub expiration: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub expiration: Option<i64>,
     /// A UUID or similar unique string that identifies this channel.
+    
     pub id: Option<String>,
     /// Identifies this as a notification channel used to watch for changes to a resource, which is "api#channel".
+    
     pub kind: Option<String>,
     /// Additional parameters controlling delivery channel behavior. Optional.
+    
     pub params: Option<HashMap<String, String>>,
     /// A Boolean value to indicate whether payload is wanted. Optional.
+    
     pub payload: Option<bool>,
     /// An opaque ID that identifies the resource being watched on this channel. Stable across different API versions.
     #[serde(rename="resourceId")]
+    
     pub resource_id: Option<String>,
     /// A version-specific identifier for the watched resource.
     #[serde(rename="resourceUri")]
+    
     pub resource_uri: Option<String>,
     /// An arbitrary string delivered to the target address with each notification delivered over this channel. Optional.
+    
     pub token: Option<String>,
     /// The type of delivery mechanism used for this channel. Valid values are "web_hook" (or "webhook"). Both values refer to a channel where Http requests are used to deliver messages.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -605,24 +709,31 @@ impl client::ResponseResult for Channel {}
 /// This type is used in activities, which are methods you may call on this type or where this type is involved in. 
 /// The list links the activity name, along with information about where it is used (one of *request* and *response*).
 /// 
-/// * [list children](ChildrenListCall) (response)
+/// * [list children](ChildListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ChildList {
     /// The ETag of the list.
+    
     pub etag: Option<String>,
     /// The list of children. If nextPageToken is populated, then this list may be incomplete and an additional page of results should be fetched.
+    
     pub items: Option<Vec<ChildReference>>,
     /// This is always drive#childList.
+    
     pub kind: Option<String>,
     /// A link to the next page of children.
     #[serde(rename="nextLink")]
+    
     pub next_link: Option<String>,
     /// The page token for the next page of children. This will be absent if the end of the children list has been reached. If the token is rejected for any reason, it should be discarded, and pagination should be restarted from the first page of results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// A link back to this list.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -636,20 +747,25 @@ impl client::ResponseResult for ChildList {}
 /// This type is used in activities, which are methods you may call on this type or where this type is involved in. 
 /// The list links the activity name, along with information about where it is used (one of *request* and *response*).
 /// 
-/// * [get children](ChildrenGetCall) (response)
-/// * [insert children](ChildrenInsertCall) (request|response)
+/// * [get children](ChildGetCall) (response)
+/// * [insert children](ChildInsertCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ChildReference {
     /// A link to the child.
     #[serde(rename="childLink")]
+    
     pub child_link: Option<String>,
     /// The ID of the child.
+    
     pub id: Option<String>,
     /// This is always drive#childReference.
+    
     pub kind: Option<String>,
     /// A link back to this reference.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -671,46 +787,62 @@ impl client::ResponseResult for ChildReference {}
 /// * [patch comments](CommentPatchCall) (request|response)
 /// * [update comments](CommentUpdateCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Comment {
     /// A region of the document represented as a JSON string. For details on defining anchor properties, refer to  Add comments and replies.
+    
     pub anchor: Option<String>,
     /// The author of the comment. The author's email address and permission ID will not be populated.
+    
     pub author: Option<User>,
     /// The ID of the comment.
     #[serde(rename="commentId")]
+    
     pub comment_id: Option<String>,
     /// The plain text content used to create this comment. This is not HTML safe and should only be used as a starting point to make edits to a comment's content.
+    
     pub content: Option<String>,
     /// The context of the file which is being commented on.
+    
     pub context: Option<CommentContext>,
     /// The date when this comment was first created.
     #[serde(rename="createdDate")]
-    pub created_date: Option<String>,
+    
+    pub created_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Whether this comment has been deleted. If a comment has been deleted the content will be cleared and this will only represent a comment that once existed.
+    
     pub deleted: Option<bool>,
     /// The file which this comment is addressing.
     #[serde(rename="fileId")]
+    
     pub file_id: Option<String>,
     /// The title of the file which this comment is addressing.
     #[serde(rename="fileTitle")]
+    
     pub file_title: Option<String>,
     /// HTML formatted content for this comment.
     #[serde(rename="htmlContent")]
+    
     pub html_content: Option<String>,
     /// This is always drive#comment.
+    
     pub kind: Option<String>,
     /// The date when this comment or any of its replies were last modified.
     #[serde(rename="modifiedDate")]
-    pub modified_date: Option<String>,
+    
+    pub modified_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Replies to this post.
+    
     pub replies: Option<Vec<CommentReply>>,
     /// A link back to this comment.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
     /// The status of this comment. Status can be changed by posting a reply to a comment with the desired status.  
     /// - "open" - The comment is still open. 
     /// - "resolved" - The comment has been resolved by one of its replies.
+    
     pub status: Option<String>,
 }
 
@@ -728,20 +860,26 @@ impl client::ResponseResult for Comment {}
 /// 
 /// * [list comments](CommentListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct CommentList {
     /// The list of comments. If nextPageToken is populated, then this list may be incomplete and an additional page of results should be fetched.
+    
     pub items: Option<Vec<Comment>>,
     /// This is always drive#commentList.
+    
     pub kind: Option<String>,
     /// A link to the next page of comments.
     #[serde(rename="nextLink")]
+    
     pub next_link: Option<String>,
     /// The page token for the next page of comments. This will be absent if the end of the comments list has been reached. If the token is rejected for any reason, it should be discarded, and pagination should be restarted from the first page of results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// A link back to this list.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -760,31 +898,41 @@ impl client::ResponseResult for CommentList {}
 /// * [patch replies](ReplyPatchCall) (request|response)
 /// * [update replies](ReplyUpdateCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct CommentReply {
     /// The author of the reply. The author's email address and permission ID will not be populated.
+    
     pub author: Option<User>,
     /// The plain text content used to create this reply. This is not HTML safe and should only be used as a starting point to make edits to a reply's content. This field is required on inserts if no verb is specified (resolve/reopen).
+    
     pub content: Option<String>,
     /// The date when this reply was first created.
     #[serde(rename="createdDate")]
-    pub created_date: Option<String>,
+    
+    pub created_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Whether this reply has been deleted. If a reply has been deleted the content will be cleared and this will only represent a reply that once existed.
+    
     pub deleted: Option<bool>,
     /// HTML formatted content for this reply.
     #[serde(rename="htmlContent")]
+    
     pub html_content: Option<String>,
     /// This is always drive#commentReply.
+    
     pub kind: Option<String>,
     /// The date when this reply was last modified.
     #[serde(rename="modifiedDate")]
-    pub modified_date: Option<String>,
+    
+    pub modified_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The ID of the reply.
     #[serde(rename="replyId")]
+    
     pub reply_id: Option<String>,
     /// The action this reply performed to the parent comment. When creating a new reply this is the action to be perform to the parent comment. Possible values are:  
     /// - "resolve" - To resolve a comment. 
     /// - "reopen" - To reopen (un-resolve) a comment.
+    
     pub verb: Option<String>,
 }
 
@@ -801,20 +949,26 @@ impl client::ResponseResult for CommentReply {}
 /// 
 /// * [list replies](ReplyListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct CommentReplyList {
     /// The list of replies. If nextPageToken is populated, then this list may be incomplete and an additional page of results should be fetched.
+    
     pub items: Option<Vec<CommentReply>>,
     /// This is always drive#commentReplyList.
+    
     pub kind: Option<String>,
     /// A link to the next page of replies.
     #[serde(rename="nextLink")]
+    
     pub next_link: Option<String>,
     /// The page token for the next page of replies. This will be absent if the end of the replies list has been reached. If the token is rejected for any reason, it should be discarded, and pagination should be restarted from the first page of results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// A link back to this list.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -825,21 +979,27 @@ impl client::ResponseResult for CommentReplyList {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ContentRestriction {
     /// Whether the content of the file is read-only. If a file is read-only, a new revision of the file may not be added, comments may not be added or modified, and the title of the file may not be modified.
     #[serde(rename="readOnly")]
+    
     pub read_only: Option<bool>,
     /// Reason for why the content of the file is restricted. This is only mutable on requests that also set readOnly=true.
+    
     pub reason: Option<String>,
     /// The user who set the content restriction. Only populated if readOnly is true.
     #[serde(rename="restrictingUser")]
+    
     pub restricting_user: Option<User>,
     /// The time at which the content restriction was set (formatted RFC 3339 timestamp). Only populated if readOnly is true.
     #[serde(rename="restrictionDate")]
-    pub restriction_date: Option<String>,
+    
+    pub restriction_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The type of the content restriction. Currently the only possible value is globalContentRestriction.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -861,37 +1021,50 @@ impl client::Part for ContentRestriction {}
 /// * [unhide drives](DriveUnhideCall) (response)
 /// * [update drives](DriveUpdateCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Drive {
     /// An image file and cropping parameters from which a background image for this shared drive is set. This is a write only field; it can only be set on drive.drives.update requests that don't set themeId. When specified, all fields of the backgroundImageFile must be set.
     #[serde(rename="backgroundImageFile")]
+    
     pub background_image_file: Option<DriveBackgroundImageFile>,
     /// A short-lived link to this shared drive's background image.
     #[serde(rename="backgroundImageLink")]
+    
     pub background_image_link: Option<String>,
     /// Capabilities the current user has on this shared drive.
+    
     pub capabilities: Option<DriveCapabilities>,
     /// The color of this shared drive as an RGB hex string. It can only be set on a drive.drives.update request that does not set themeId.
     #[serde(rename="colorRgb")]
+    
     pub color_rgb: Option<String>,
     /// The time at which the shared drive was created (RFC 3339 date-time).
     #[serde(rename="createdDate")]
-    pub created_date: Option<String>,
+    
+    pub created_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Whether the shared drive is hidden from default view.
+    
     pub hidden: Option<bool>,
     /// The ID of this shared drive which is also the ID of the top level folder of this shared drive.
+    
     pub id: Option<String>,
     /// This is always drive#drive
+    
     pub kind: Option<String>,
     /// The name of this shared drive.
+    
     pub name: Option<String>,
     /// The organizational unit of this shared drive. This field is only populated on drives.list responses when the useDomainAdminAccess parameter is set to true.
     #[serde(rename="orgUnitId")]
+    
     pub org_unit_id: Option<String>,
     /// A set of restrictions that apply to this shared drive or items inside this shared drive.
+    
     pub restrictions: Option<DriveRestrictions>,
     /// The ID of the theme from which the background image and color will be set. The set of possible driveThemes can be retrieved from a drive.about.get response. When not specified on a drive.drives.insert request, a random theme is chosen from which the background image and color are set. This is a write-only field; it can only be set on requests that don't set colorRgb or backgroundImageFile.
     #[serde(rename="themeId")]
+    
     pub theme_id: Option<String>,
 }
 
@@ -909,14 +1082,18 @@ impl client::ResponseResult for Drive {}
 /// 
 /// * [list drives](DriveListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct DriveList {
     /// The list of shared drives. If nextPageToken is populated, then this list may be incomplete and an additional page of results should be fetched.
+    
     pub items: Option<Vec<Drive>>,
     /// This is always drive#driveList
+    
     pub kind: Option<String>,
     /// The page token for the next page of shared drives. This will be absent if the end of the list has been reached. If the token is rejected for any reason, it should be discarded, and pagination should be restarted from the first page of results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
 }
 
@@ -945,206 +1122,283 @@ impl client::ResponseResult for DriveList {}
 /// * [update files](FileUpdateCall) (request|response)
 /// * [watch files](FileWatchCall) (none)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct File {
     /// A link for opening the file in a relevant Google editor or viewer.
     #[serde(rename="alternateLink")]
+    
     pub alternate_link: Option<String>,
     /// Whether this file is in the Application Data folder.
     #[serde(rename="appDataContents")]
+    
     pub app_data_contents: Option<bool>,
     /// Deprecated: use capabilities/canComment.
     #[serde(rename="canComment")]
+    
     pub can_comment: Option<bool>,
     /// Deprecated: use capabilities/canReadRevisions.
     #[serde(rename="canReadRevisions")]
+    
     pub can_read_revisions: Option<bool>,
     /// Capabilities the current user has on this file. Each capability corresponds to a fine-grained action that a user may take.
+    
     pub capabilities: Option<FileCapabilities>,
     /// Restrictions for accessing the content of the file. Only populated if such a restriction exists.
     #[serde(rename="contentRestrictions")]
+    
     pub content_restrictions: Option<Vec<ContentRestriction>>,
     /// Whether the options to copy, print, or download this file, should be disabled for readers and commenters.
     #[serde(rename="copyRequiresWriterPermission")]
+    
     pub copy_requires_writer_permission: Option<bool>,
     /// Deprecated: use capabilities/canCopy.
+    
     pub copyable: Option<bool>,
     /// Create time for this file (formatted RFC 3339 timestamp).
     #[serde(rename="createdDate")]
-    pub created_date: Option<String>,
+    
+    pub created_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// A link to open this file with the user's default app for this file. Only populated when the drive.apps.readonly scope is used.
     #[serde(rename="defaultOpenWithLink")]
+    
     pub default_open_with_link: Option<String>,
     /// A short description of the file.
+    
     pub description: Option<String>,
     /// Short lived download URL for the file. This field is only populated for files with content stored in Google Drive; it is not populated for Docs Editors or shortcut files.
     #[serde(rename="downloadUrl")]
+    
     pub download_url: Option<String>,
     /// ID of the shared drive the file resides in. Only populated for items in shared drives.
     #[serde(rename="driveId")]
+    
     pub drive_id: Option<String>,
     /// Deprecated: use capabilities/canEdit.
+    
     pub editable: Option<bool>,
     /// A link for embedding the file.
     #[serde(rename="embedLink")]
+    
     pub embed_link: Option<String>,
     /// ETag of the file.
+    
     pub etag: Option<String>,
     /// Whether this file has been explicitly trashed, as opposed to recursively trashed.
     #[serde(rename="explicitlyTrashed")]
+    
     pub explicitly_trashed: Option<bool>,
     /// Links for exporting Docs Editors files to specific formats.
     #[serde(rename="exportLinks")]
+    
     pub export_links: Option<HashMap<String, String>>,
     /// The final component of fullFileExtension with trailing text that does not appear to be part of the extension removed. This field is only populated for files with content stored in Google Drive; it is not populated for Docs Editors or shortcut files.
     #[serde(rename="fileExtension")]
+    
     pub file_extension: Option<String>,
     /// The size of the file in bytes. This field is populated for files with content stored in Google Drive and for files in Docs Editors; it is not populated for shortcut files.
     #[serde(rename="fileSize")]
-    pub file_size: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub file_size: Option<i64>,
     /// Folder color as an RGB hex string if the file is a folder or a shortcut to a folder. The list of supported colors is available in the folderColorPalette field of the About resource. If an unsupported color is specified, it will be changed to the closest color in the palette.
     #[serde(rename="folderColorRgb")]
+    
     pub folder_color_rgb: Option<String>,
     /// The full file extension; extracted from the title. May contain multiple concatenated extensions, such as "tar.gz". Removing an extension from the title does not clear this field; however, changing the extension on the title does update this field. This field is only populated for files with content stored in Google Drive; it is not populated for Docs Editors or shortcut files.
     #[serde(rename="fullFileExtension")]
+    
     pub full_file_extension: Option<String>,
     /// Whether there are permissions directly on this file. This field is only populated for items in shared drives.
     #[serde(rename="hasAugmentedPermissions")]
+    
     pub has_augmented_permissions: Option<bool>,
     /// Whether this file has a thumbnail. This does not indicate whether the requesting app has access to the thumbnail. To check access, look for the presence of the thumbnailLink field.
     #[serde(rename="hasThumbnail")]
+    
     pub has_thumbnail: Option<bool>,
     /// The ID of the file's head revision. This field is only populated for files with content stored in Google Drive; it is not populated for Docs Editors or shortcut files.
     #[serde(rename="headRevisionId")]
+    
     pub head_revision_id: Option<String>,
     /// A link to the file's icon.
     #[serde(rename="iconLink")]
+    
     pub icon_link: Option<String>,
     /// The ID of the file.
+    
     pub id: Option<String>,
     /// Metadata about image media. This will only be present for image types, and its contents will depend on what can be parsed from the image content.
     #[serde(rename="imageMediaMetadata")]
+    
     pub image_media_metadata: Option<FileImageMediaMetadata>,
     /// Indexable text attributes for the file (can only be written)
     #[serde(rename="indexableText")]
+    
     pub indexable_text: Option<FileIndexableText>,
     /// Whether the file was created or opened by the requesting app.
     #[serde(rename="isAppAuthorized")]
+    
     pub is_app_authorized: Option<bool>,
     /// The type of file. This is always drive#file.
+    
     pub kind: Option<String>,
     /// A group of labels for the file.
+    
     pub labels: Option<FileLabels>,
     /// The last user to modify this file.
     #[serde(rename="lastModifyingUser")]
+    
     pub last_modifying_user: Option<User>,
     /// Name of the last user to modify this file.
     #[serde(rename="lastModifyingUserName")]
+    
     pub last_modifying_user_name: Option<String>,
     /// Last time this file was viewed by the user (formatted RFC 3339 timestamp).
     #[serde(rename="lastViewedByMeDate")]
-    pub last_viewed_by_me_date: Option<String>,
+    
+    pub last_viewed_by_me_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Contains details about the link URLs that clients are using to refer to this item.
     #[serde(rename="linkShareMetadata")]
+    
     pub link_share_metadata: Option<FileLinkShareMetadata>,
     /// Deprecated.
     #[serde(rename="markedViewedByMeDate")]
-    pub marked_viewed_by_me_date: Option<String>,
+    
+    pub marked_viewed_by_me_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// An MD5 checksum for the content of this file. This field is only populated for files with content stored in Google Drive; it is not populated for Docs Editors or shortcut files.
     #[serde(rename="md5Checksum")]
+    
     pub md5_checksum: Option<String>,
     /// The MIME type of the file. This is only mutable on update when uploading new content. This field can be left blank, and the mimetype will be determined from the uploaded content's MIME type.
     #[serde(rename="mimeType")]
+    
     pub mime_type: Option<String>,
     /// Last time this file was modified by the user (formatted RFC 3339 timestamp). Note that setting modifiedDate will also update the modifiedByMe date for the user which set the date.
     #[serde(rename="modifiedByMeDate")]
-    pub modified_by_me_date: Option<String>,
+    
+    pub modified_by_me_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Last time this file was modified by anyone (formatted RFC 3339 timestamp). This is only mutable on update when the setModifiedDate parameter is set.
     #[serde(rename="modifiedDate")]
-    pub modified_date: Option<String>,
+    
+    pub modified_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// A map of the id of each of the user's apps to a link to open this file with that app. Only populated when the drive.apps.readonly scope is used.
     #[serde(rename="openWithLinks")]
+    
     pub open_with_links: Option<HashMap<String, String>>,
     /// The original filename of the uploaded content if available, or else the original value of the title field. This is only available for files with binary content in Google Drive.
     #[serde(rename="originalFilename")]
+    
     pub original_filename: Option<String>,
     /// Whether the file is owned by the current user. Not populated for items in shared drives.
     #[serde(rename="ownedByMe")]
+    
     pub owned_by_me: Option<bool>,
     /// Name(s) of the owner(s) of this file. Not populated for items in shared drives.
     #[serde(rename="ownerNames")]
+    
     pub owner_names: Option<Vec<String>>,
     /// The owner of this file. Only certain legacy files may have more than one owner. This field isn't populated for items in shared drives.
+    
     pub owners: Option<Vec<User>>,
     /// Collection of parent folders which contain this file.
     /// If not specified as part of an insert request, the file will be placed directly in the user's My Drive folder. If not specified as part of a copy request, the file will inherit any discoverable parents of the source file. Update requests can also use the addParents and removeParents parameters to modify the parents list.
+    
     pub parents: Option<Vec<ParentReference>>,
     /// List of permission IDs for users with access to this file.
     #[serde(rename="permissionIds")]
+    
     pub permission_ids: Option<Vec<String>>,
     /// The list of permissions for users with access to this file. Not populated for items in shared drives.
+    
     pub permissions: Option<Vec<Permission>>,
     /// The list of properties.
+    
     pub properties: Option<Vec<Property>>,
     /// The number of quota bytes used by this file.
     #[serde(rename="quotaBytesUsed")]
-    pub quota_bytes_used: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub quota_bytes_used: Option<i64>,
     /// A key needed to access the item via a shared link.
     #[serde(rename="resourceKey")]
+    
     pub resource_key: Option<String>,
     /// A link back to this file.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
     /// Deprecated: use capabilities/canShare.
+    
     pub shareable: Option<bool>,
     /// Whether the file has been shared. Not populated for items in shared drives.
+    
     pub shared: Option<bool>,
     /// Time at which this file was shared with the user (formatted RFC 3339 timestamp).
     #[serde(rename="sharedWithMeDate")]
-    pub shared_with_me_date: Option<String>,
+    
+    pub shared_with_me_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// User that shared the item with the current user, if available.
     #[serde(rename="sharingUser")]
+    
     pub sharing_user: Option<User>,
     /// Shortcut file details. Only populated for shortcut files, which have the mimeType field set to application/vnd.google-apps.shortcut.
     #[serde(rename="shortcutDetails")]
+    
     pub shortcut_details: Option<FileShortcutDetails>,
     /// The list of spaces which contain the file. Supported values are 'drive', 'appDataFolder' and 'photos'.
+    
     pub spaces: Option<Vec<String>>,
     /// Deprecated - use driveId instead.
     #[serde(rename="teamDriveId")]
+    
     pub team_drive_id: Option<String>,
     /// A thumbnail for the file. This will only be used if a standard thumbnail cannot be generated.
+    
     pub thumbnail: Option<FileThumbnail>,
     /// A short-lived link to the file's thumbnail. Typically lasts on the order of hours. Only populated when the requesting app can access the file's content. If the file isn't shared publicly, the URL returned in Files.thumbnailLink must be fetched using a credentialed request.
     #[serde(rename="thumbnailLink")]
+    
     pub thumbnail_link: Option<String>,
     /// The thumbnail version for use in thumbnail cache invalidation.
     #[serde(rename="thumbnailVersion")]
-    pub thumbnail_version: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub thumbnail_version: Option<i64>,
     /// The title of this file. Note that for immutable items such as the top level folders of shared drives, My Drive root folder, and Application Data folder the title is constant.
+    
     pub title: Option<String>,
     /// The time that the item was trashed (formatted RFC 3339 timestamp). Only populated for items in shared drives.
     #[serde(rename="trashedDate")]
-    pub trashed_date: Option<String>,
+    
+    pub trashed_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// If the file has been explicitly trashed, the user who trashed it. Only populated for items in shared drives.
     #[serde(rename="trashingUser")]
+    
     pub trashing_user: Option<User>,
     /// The permissions for the authenticated user on this file.
     #[serde(rename="userPermission")]
+    
     pub user_permission: Option<Permission>,
     /// A monotonically increasing version number for the file. This reflects every change made to the file on the server, even those not visible to the requesting user.
-    pub version: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub version: Option<i64>,
     /// Metadata about video media. This will only be present for video types.
     #[serde(rename="videoMediaMetadata")]
+    
     pub video_media_metadata: Option<FileVideoMediaMetadata>,
     /// A link for downloading the content of the file in a browser using cookie based authentication. In cases where the content is shared publicly, the content can be downloaded without any credentials.
     #[serde(rename="webContentLink")]
+    
     pub web_content_link: Option<String>,
     /// A link only available on public folders for viewing their static web assets (HTML, CSS, JS, etc) via Google Drive's Website Hosting.
     #[serde(rename="webViewLink")]
+    
     pub web_view_link: Option<String>,
     /// Whether writers can share the document with other users. Not populated for items in shared drives.
     #[serde(rename="writersCanShare")]
+    
     pub writers_can_share: Option<bool>,
 }
 
@@ -1162,25 +1416,33 @@ impl client::ResponseResult for File {}
 /// 
 /// * [list files](FileListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct FileList {
     /// The ETag of the list.
+    
     pub etag: Option<String>,
     /// Whether the search process was incomplete. If true, then some search results may be missing, since all documents were not searched. This may occur when searching multiple drives with the "allDrives" corpora, but all corpora could not be searched. When this happens, it is suggested that clients narrow their query by choosing a different corpus such as "default" or "drive".
     #[serde(rename="incompleteSearch")]
+    
     pub incomplete_search: Option<bool>,
     /// The list of files. If nextPageToken is populated, then this list may be incomplete and an additional page of results should be fetched.
+    
     pub items: Option<Vec<File>>,
     /// This is always drive#fileList.
+    
     pub kind: Option<String>,
     /// A link to the next page of files.
     #[serde(rename="nextLink")]
+    
     pub next_link: Option<String>,
     /// The page token for the next page of files. This will be absent if the end of the files list has been reached. If the token is rejected for any reason, it should be discarded, and pagination should be restarted from the first page of results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// A link back to this list.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -1196,13 +1458,17 @@ impl client::ResponseResult for FileList {}
 /// 
 /// * [generate ids files](FileGenerateIdCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GeneratedIds {
     /// The IDs generated for the requesting user in the specified space.
+    
     pub ids: Option<Vec<String>>,
     /// This is always drive#generatedIds
+    
     pub kind: Option<String>,
     /// The type of file that can be created with these IDs.
+    
     pub space: Option<String>,
 }
 
@@ -1218,16 +1484,21 @@ impl client::ResponseResult for GeneratedIds {}
 /// 
 /// * [list parents](ParentListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ParentList {
     /// The ETag of the list.
+    
     pub etag: Option<String>,
     /// The list of parents.
+    
     pub items: Option<Vec<ParentReference>>,
     /// This is always drive#parentList.
+    
     pub kind: Option<String>,
     /// A link back to this list.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -1244,20 +1515,26 @@ impl client::ResponseResult for ParentList {}
 /// * [get parents](ParentGetCall) (response)
 /// * [insert parents](ParentInsertCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct ParentReference {
     /// The ID of the parent.
+    
     pub id: Option<String>,
     /// Whether or not the parent is the root folder.
     #[serde(rename="isRoot")]
+    
     pub is_root: Option<bool>,
     /// This is always drive#parentReference.
+    
     pub kind: Option<String>,
     /// A link to the parent.
     #[serde(rename="parentLink")]
+    
     pub parent_link: Option<String>,
     /// A link back to this reference.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -1280,22 +1557,29 @@ impl client::ResponseResult for ParentReference {}
 /// * [patch permissions](PermissionPatchCall) (request|response)
 /// * [update permissions](PermissionUpdateCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Permission {
     /// Additional roles for this user. Only commenter is currently allowed, though more may be supported in the future.
     #[serde(rename="additionalRoles")]
+    
     pub additional_roles: Option<Vec<String>>,
     /// Deprecated.
     #[serde(rename="authKey")]
+    
     pub auth_key: Option<String>,
     /// Whether the account associated with this permission has been deleted. This field only pertains to user and group permissions.
+    
     pub deleted: Option<bool>,
     /// The domain name of the entity this permission refers to. This is an output-only field which is present when the permission type is user, group or domain.
+    
     pub domain: Option<String>,
     /// The email address of the user or group this permission refers to. This is an output-only field which is present when the permission type is user or group.
     #[serde(rename="emailAddress")]
+    
     pub email_address: Option<String>,
     /// The ETag of the permission.
+    
     pub etag: Option<String>,
     /// The time at which this permission will expire (RFC 3339 date-time). Expiration dates have the following restrictions:  
     /// - They cannot be set on shared drive items 
@@ -1304,21 +1588,28 @@ pub struct Permission {
     /// - The date cannot be more than a year in the future 
     /// - The date can only be set on drive.permissions.update or drive.permissions.patch requests
     #[serde(rename="expirationDate")]
-    pub expiration_date: Option<String>,
+    
+    pub expiration_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The ID of the user this permission refers to, and identical to the permissionId in the About and Files resources. When making a drive.permissions.insert request, exactly one of the id or value fields must be specified unless the permission type is anyone, in which case both id and value are ignored.
+    
     pub id: Option<String>,
     /// This is always drive#permission.
+    
     pub kind: Option<String>,
     /// The name for this permission.
+    
     pub name: Option<String>,
     /// Whether the account associated with this permission is a pending owner. Only populated for user type permissions for files that are not in a shared drive.
     #[serde(rename="pendingOwner")]
+    
     pub pending_owner: Option<bool>,
     /// Details of whether the permissions on this shared drive item are inherited or directly on this item. This is an output-only field which is present only for shared drive items.
     #[serde(rename="permissionDetails")]
+    
     pub permission_details: Option<Vec<PermissionPermissionDetails>>,
     /// A link to the profile photo, if available.
     #[serde(rename="photoLink")]
+    
     pub photo_link: Option<String>,
     /// The primary role for this user. While new values may be supported in the future, the following are currently allowed:  
     /// - owner 
@@ -1326,12 +1617,15 @@ pub struct Permission {
     /// - fileOrganizer 
     /// - writer 
     /// - reader
+    
     pub role: Option<String>,
     /// A link back to this permission.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
     /// Deprecated - use permissionDetails instead.
     #[serde(rename="teamDrivePermissionDetails")]
+    
     pub team_drive_permission_details: Option<Vec<PermissionTeamDrivePermissionDetails>>,
     /// The account type. Allowed values are:  
     /// - user 
@@ -1339,13 +1633,17 @@ pub struct Permission {
     /// - domain 
     /// - anyone
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
     /// The email address or domain name for the entity. This is used during inserts and is not populated in responses. When making a drive.permissions.insert request, exactly one of the id or value fields must be specified unless the permission type is anyone, in which case both id and value are ignored.
+    
     pub value: Option<String>,
     /// Indicates the view for this permission. Only populated for permissions that belong to a view. published is the only supported value.
+    
     pub view: Option<String>,
     /// Whether the link is required for this permission.
     #[serde(rename="withLink")]
+    
     pub with_link: Option<bool>,
 }
 
@@ -1363,11 +1661,14 @@ impl client::ResponseResult for Permission {}
 /// 
 /// * [get id for email permissions](PermissionGetIdForEmailCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct PermissionId {
     /// The permission ID.
+    
     pub id: Option<String>,
     /// This is always drive#permissionId.
+    
     pub kind: Option<String>,
 }
 
@@ -1383,19 +1684,25 @@ impl client::ResponseResult for PermissionId {}
 /// 
 /// * [list permissions](PermissionListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct PermissionList {
     /// The ETag of the list.
+    
     pub etag: Option<String>,
     /// The list of permissions.
+    
     pub items: Option<Vec<Permission>>,
     /// This is always drive#permissionList.
+    
     pub kind: Option<String>,
     /// The page token for the next page of permissions. This field will be absent if the end of the permissions list has been reached. If the token is rejected for any reason, it should be discarded, and pagination should be restarted from the first page of results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// A link back to this list.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -1419,20 +1726,27 @@ impl client::ResponseResult for PermissionList {}
 /// * [patch properties](PropertyPatchCall) (request|response)
 /// * [update properties](PropertyUpdateCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Property {
     /// ETag of the property.
+    
     pub etag: Option<String>,
     /// The key of this property.
+    
     pub key: Option<String>,
     /// This is always drive#property.
+    
     pub kind: Option<String>,
     /// The link back to this property.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
     /// The value of this property.
+    
     pub value: Option<String>,
     /// The visibility of this property. Allowed values are PRIVATE and PUBLIC. (Default: PRIVATE). Private properties can only be retrieved using an authenticated request. An authenticated request uses an access token obtained with a OAuth 2 client ID. You cannot use an API key to retrieve private properties.
+    
     pub visibility: Option<String>,
 }
 
@@ -1449,16 +1763,21 @@ impl client::ResponseResult for Property {}
 /// 
 /// * [list properties](PropertyListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct PropertyList {
     /// The ETag of the list.
+    
     pub etag: Option<String>,
     /// The list of properties.
+    
     pub items: Option<Vec<Property>>,
     /// This is always drive#propertyList.
+    
     pub kind: Option<String>,
     /// The link back to this list.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -1478,56 +1797,76 @@ impl client::ResponseResult for PropertyList {}
 /// * [patch revisions](RevisionPatchCall) (request|response)
 /// * [update revisions](RevisionUpdateCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Revision {
     /// no description provided
     #[serde(rename="downloadUrl")]
+    
     pub download_url: Option<String>,
     /// The ETag of the revision.
+    
     pub etag: Option<String>,
     /// Links for exporting Docs Editors files to specific formats.
     #[serde(rename="exportLinks")]
+    
     pub export_links: Option<HashMap<String, String>>,
     /// The size of the revision in bytes. This will only be populated on files with content stored in Drive.
     #[serde(rename="fileSize")]
-    pub file_size: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub file_size: Option<i64>,
     /// The ID of the revision.
+    
     pub id: Option<String>,
     /// This is always drive#revision.
+    
     pub kind: Option<String>,
     /// The last user to modify this revision.
     #[serde(rename="lastModifyingUser")]
+    
     pub last_modifying_user: Option<User>,
     /// Name of the last user to modify this revision.
     #[serde(rename="lastModifyingUserName")]
+    
     pub last_modifying_user_name: Option<String>,
     /// An MD5 checksum for the content of this revision. This will only be populated on files with content stored in Drive.
     #[serde(rename="md5Checksum")]
+    
     pub md5_checksum: Option<String>,
     /// The MIME type of the revision.
     #[serde(rename="mimeType")]
+    
     pub mime_type: Option<String>,
     /// Last time this revision was modified (formatted RFC 3339 timestamp).
     #[serde(rename="modifiedDate")]
-    pub modified_date: Option<String>,
+    
+    pub modified_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The original filename when this revision was created. This will only be populated on files with content stored in Drive.
     #[serde(rename="originalFilename")]
+    
     pub original_filename: Option<String>,
     /// Whether this revision is pinned to prevent automatic purging. If not set, the revision is automatically purged 30 days after newer content is uploaded. This field can only be modified on files with content stored in Drive, excluding Docs Editors files. Revisions can also be pinned when they are created through the drive.files.insert/update/copy by using the pinned query parameter. Pinned revisions are stored indefinitely using additional storage quota, up to a maximum of 200 revisions.
+    
     pub pinned: Option<bool>,
     /// Whether subsequent revisions will be automatically republished. This is only populated and can only be modified for Docs Editors files.
     #[serde(rename="publishAuto")]
+    
     pub publish_auto: Option<bool>,
     /// Whether this revision is published. This is only populated and can only be modified for Docs Editors files.
+    
     pub published: Option<bool>,
     /// A link to the published revision. This is only populated for Google Sites files.
     #[serde(rename="publishedLink")]
+    
     pub published_link: Option<String>,
     /// Whether this revision is published outside the domain. This is only populated and can only be modified for Docs Editors files.
     #[serde(rename="publishedOutsideDomain")]
+    
     pub published_outside_domain: Option<bool>,
     /// A link back to this revision.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -1545,19 +1884,25 @@ impl client::ResponseResult for Revision {}
 /// 
 /// * [list revisions](RevisionListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct RevisionList {
     /// The ETag of the list.
+    
     pub etag: Option<String>,
     /// The list of revisions. If nextPageToken is populated, then this list may be incomplete and an additional page of results should be fetched.
+    
     pub items: Option<Vec<Revision>>,
     /// This is always drive#revisionList.
+    
     pub kind: Option<String>,
     /// The page token for the next page of revisions. This field will be absent if the end of the revisions list has been reached. If the token is rejected for any reason, it should be discarded and pagination should be restarted from the first page of results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// A link back to this list.
     #[serde(rename="selfLink")]
+    
     pub self_link: Option<String>,
 }
 
@@ -1573,12 +1918,15 @@ impl client::ResponseResult for RevisionList {}
 /// 
 /// * [get start page token changes](ChangeGetStartPageTokenCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct StartPageToken {
     /// Identifies what kind of resource this is. Value: the fixed string "drive#startPageToken".
+    
     pub kind: Option<String>,
     /// The starting page token for listing changes.
     #[serde(rename="startPageToken")]
+    
     pub start_page_token: Option<String>,
 }
 
@@ -1596,35 +1944,47 @@ impl client::ResponseResult for StartPageToken {}
 /// * [insert teamdrives](TeamdriveInsertCall) (request|response)
 /// * [update teamdrives](TeamdriveUpdateCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct TeamDrive {
     /// An image file and cropping parameters from which a background image for this Team Drive is set. This is a write only field; it can only be set on drive.teamdrives.update requests that don't set themeId. When specified, all fields of the backgroundImageFile must be set.
     #[serde(rename="backgroundImageFile")]
+    
     pub background_image_file: Option<TeamDriveBackgroundImageFile>,
     /// A short-lived link to this Team Drive's background image.
     #[serde(rename="backgroundImageLink")]
+    
     pub background_image_link: Option<String>,
     /// Capabilities the current user has on this Team Drive.
+    
     pub capabilities: Option<TeamDriveCapabilities>,
     /// The color of this Team Drive as an RGB hex string. It can only be set on a drive.teamdrives.update request that does not set themeId.
     #[serde(rename="colorRgb")]
+    
     pub color_rgb: Option<String>,
     /// The time at which the Team Drive was created (RFC 3339 date-time).
     #[serde(rename="createdDate")]
-    pub created_date: Option<String>,
+    
+    pub created_date: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The ID of this Team Drive which is also the ID of the top level folder of this Team Drive.
+    
     pub id: Option<String>,
     /// This is always drive#teamDrive
+    
     pub kind: Option<String>,
     /// The name of this Team Drive.
+    
     pub name: Option<String>,
     /// The organizational unit of this shared drive. This field is only populated on drives.list responses when the useDomainAdminAccess parameter is set to true.
     #[serde(rename="orgUnitId")]
+    
     pub org_unit_id: Option<String>,
     /// A set of restrictions that apply to this Team Drive or items inside this Team Drive.
+    
     pub restrictions: Option<TeamDriveRestrictions>,
     /// The ID of the theme from which the background image and color will be set. The set of possible teamDriveThemes can be retrieved from a drive.about.get response. When not specified on a drive.teamdrives.insert request, a random theme is chosen from which the background image and color are set. This is a write-only field; it can only be set on requests that don't set colorRgb or backgroundImageFile.
     #[serde(rename="themeId")]
+    
     pub theme_id: Option<String>,
 }
 
@@ -1642,14 +2002,18 @@ impl client::ResponseResult for TeamDrive {}
 /// 
 /// * [list teamdrives](TeamdriveListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct TeamDriveList {
     /// The list of Team Drives.
+    
     pub items: Option<Vec<TeamDrive>>,
     /// This is always drive#teamDriveList
+    
     pub kind: Option<String>,
     /// The page token for the next page of Team Drives.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
 }
 
@@ -1660,23 +2024,30 @@ impl client::ResponseResult for TeamDriveList {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct User {
     /// A plain text displayable name for this user.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// The email address of the user.
     #[serde(rename="emailAddress")]
+    
     pub email_address: Option<String>,
     /// Whether this user is the same as the authenticated user for whom the request was made.
     #[serde(rename="isAuthenticatedUser")]
+    
     pub is_authenticated_user: Option<bool>,
     /// This is always drive#user.
+    
     pub kind: Option<String>,
     /// The user's ID as visible in the permissions collection.
     #[serde(rename="permissionId")]
+    
     pub permission_id: Option<String>,
     /// The user's profile picture.
+    
     pub picture: Option<UserPicture>,
 }
 
@@ -1687,13 +2058,16 @@ impl client::Part for User {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct AboutAdditionalRoleInfo {
     /// The supported additional roles per primary role.
     #[serde(rename="roleSets")]
+    
     pub role_sets: Option<Vec<AboutAdditionalRoleInfoRoleSets>>,
     /// The content type that this additional role info applies to.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -1705,13 +2079,16 @@ impl client::Part for AboutAdditionalRoleInfo {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct AboutAdditionalRoleInfoRoleSets {
     /// The supported additional roles with the primary role.
     #[serde(rename="additionalRoles")]
+    
     pub additional_roles: Option<Vec<String>>,
     /// A primary permission role.
     #[serde(rename="primaryRole")]
+    
     pub primary_role: Option<String>,
 }
 
@@ -1723,15 +2100,19 @@ impl client::Part for AboutAdditionalRoleInfoRoleSets {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct AboutDriveThemes {
     /// A link to this theme's background image.
     #[serde(rename="backgroundImageLink")]
+    
     pub background_image_link: Option<String>,
     /// The color of this theme as an RGB hex string.
     #[serde(rename="colorRgb")]
+    
     pub color_rgb: Option<String>,
     /// The ID of the theme.
+    
     pub id: Option<String>,
 }
 
@@ -1743,11 +2124,14 @@ impl client::Part for AboutDriveThemes {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct AboutExportFormats {
     /// The content type to convert from.
+    
     pub source: Option<String>,
     /// The possible content types to convert to.
+    
     pub targets: Option<Vec<String>>,
 }
 
@@ -1759,13 +2143,16 @@ impl client::Part for AboutExportFormats {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct AboutFeatures {
     /// The name of the feature.
     #[serde(rename="featureName")]
+    
     pub feature_name: Option<String>,
     /// The request limit rate for this feature, in queries per second.
     #[serde(rename="featureRate")]
+    
     pub feature_rate: Option<f64>,
 }
 
@@ -1777,11 +2164,14 @@ impl client::Part for AboutFeatures {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct AboutImportFormats {
     /// The imported file's content type to convert from.
+    
     pub source: Option<String>,
     /// The possible content types to convert to.
+    
     pub targets: Option<Vec<String>>,
 }
 
@@ -1793,12 +2183,16 @@ impl client::Part for AboutImportFormats {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct AboutMaxUploadSizes {
     /// The max upload size for this type.
-    pub size: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub size: Option<i64>,
     /// The file type.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -1810,13 +2204,17 @@ impl client::Part for AboutMaxUploadSizes {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct AboutQuotaBytesByService {
     /// The storage quota bytes used by the service.
     #[serde(rename="bytesUsed")]
-    pub bytes_used: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub bytes_used: Option<i64>,
     /// The service's name, e.g. DRIVE, GMAIL, or PHOTOS.
     #[serde(rename="serviceName")]
+    
     pub service_name: Option<String>,
 }
 
@@ -1828,15 +2226,19 @@ impl client::Part for AboutQuotaBytesByService {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct AboutTeamDriveThemes {
     /// Deprecated - use driveThemes/backgroundImageLink instead.
     #[serde(rename="backgroundImageLink")]
+    
     pub background_image_link: Option<String>,
     /// Deprecated - use driveThemes/colorRgb instead.
     #[serde(rename="colorRgb")]
+    
     pub color_rgb: Option<String>,
     /// Deprecated - use driveThemes/id instead.
+    
     pub id: Option<String>,
 }
 
@@ -1848,17 +2250,21 @@ impl client::Part for AboutTeamDriveThemes {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct AppIcons {
     /// Category of the icon. Allowed values are:  
     /// - application - icon for the application 
     /// - document - icon for a file associated with the app 
     /// - documentShared - icon for a shared file associated with the app
+    
     pub category: Option<String>,
     /// URL for the icon.
     #[serde(rename="iconUrl")]
+    
     pub icon_url: Option<String>,
     /// Size of the icon. Represented as the maximum of the width and height.
+    
     pub size: Option<i32>,
 }
 
@@ -1870,12 +2276,15 @@ impl client::Part for AppIcons {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct CommentContext {
     /// The MIME type of the context snippet.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
     /// Data representation of the segment of the file being commented on. In the case of a text file for example, this would be the actual text that the comment is about.
+    
     pub value: Option<String>,
 }
 
@@ -1887,17 +2296,22 @@ impl client::Part for CommentContext {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct DriveBackgroundImageFile {
     /// The ID of an image file in Google Drive to use for the background image.
+    
     pub id: Option<String>,
     /// The width of the cropped image in the closed range of 0 to 1. This value represents the width of the cropped image divided by the width of the entire image. The height is computed by applying a width to height aspect ratio of 80 to 9. The resulting image must be at least 1280 pixels wide and 144 pixels high.
+    
     pub width: Option<f32>,
     /// The X coordinate of the upper left corner of the cropping area in the background image. This is a value in the closed range of 0 to 1. This value represents the horizontal distance from the left side of the entire image to the left side of the cropping area divided by the width of the entire image.
     #[serde(rename="xCoordinate")]
+    
     pub x_coordinate: Option<f32>,
     /// The Y coordinate of the upper left corner of the cropping area in the background image. This is a value in the closed range of 0 to 1. This value represents the vertical distance from the top side of the entire image to the top side of the cropping area divided by the height of the entire image.
     #[serde(rename="yCoordinate")]
+    
     pub y_coordinate: Option<f32>,
 }
 
@@ -1909,61 +2323,80 @@ impl client::Part for DriveBackgroundImageFile {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct DriveCapabilities {
     /// Whether the current user can add children to folders in this shared drive.
     #[serde(rename="canAddChildren")]
+    
     pub can_add_children: Option<bool>,
     /// Whether the current user can change the copyRequiresWriterPermission restriction of this shared drive.
     #[serde(rename="canChangeCopyRequiresWriterPermissionRestriction")]
+    
     pub can_change_copy_requires_writer_permission_restriction: Option<bool>,
     /// Whether the current user can change the domainUsersOnly restriction of this shared drive.
     #[serde(rename="canChangeDomainUsersOnlyRestriction")]
+    
     pub can_change_domain_users_only_restriction: Option<bool>,
     /// Whether the current user can change the background of this shared drive.
     #[serde(rename="canChangeDriveBackground")]
+    
     pub can_change_drive_background: Option<bool>,
     /// Whether the current user can change the driveMembersOnly restriction of this shared drive.
     #[serde(rename="canChangeDriveMembersOnlyRestriction")]
+    
     pub can_change_drive_members_only_restriction: Option<bool>,
     /// Whether the current user can comment on files in this shared drive.
     #[serde(rename="canComment")]
+    
     pub can_comment: Option<bool>,
     /// Whether the current user can copy files in this shared drive.
     #[serde(rename="canCopy")]
+    
     pub can_copy: Option<bool>,
     /// Whether the current user can delete children from folders in this shared drive.
     #[serde(rename="canDeleteChildren")]
+    
     pub can_delete_children: Option<bool>,
     /// Whether the current user can delete this shared drive. Attempting to delete the shared drive may still fail if there are untrashed items inside the shared drive.
     #[serde(rename="canDeleteDrive")]
+    
     pub can_delete_drive: Option<bool>,
     /// Whether the current user can download files in this shared drive.
     #[serde(rename="canDownload")]
+    
     pub can_download: Option<bool>,
     /// Whether the current user can edit files in this shared drive
     #[serde(rename="canEdit")]
+    
     pub can_edit: Option<bool>,
     /// Whether the current user can list the children of folders in this shared drive.
     #[serde(rename="canListChildren")]
+    
     pub can_list_children: Option<bool>,
     /// Whether the current user can add members to this shared drive or remove them or change their role.
     #[serde(rename="canManageMembers")]
+    
     pub can_manage_members: Option<bool>,
     /// Whether the current user can read the revisions resource of files in this shared drive.
     #[serde(rename="canReadRevisions")]
+    
     pub can_read_revisions: Option<bool>,
     /// Whether the current user can rename files or folders in this shared drive.
     #[serde(rename="canRename")]
+    
     pub can_rename: Option<bool>,
     /// Whether the current user can rename this shared drive.
     #[serde(rename="canRenameDrive")]
+    
     pub can_rename_drive: Option<bool>,
     /// Whether the current user can share files or folders in this shared drive.
     #[serde(rename="canShare")]
+    
     pub can_share: Option<bool>,
     /// Whether the current user can trash children from folders in this shared drive.
     #[serde(rename="canTrashChildren")]
+    
     pub can_trash_children: Option<bool>,
 }
 
@@ -1975,19 +2408,24 @@ impl client::Part for DriveCapabilities {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct DriveRestrictions {
     /// Whether administrative privileges on this shared drive are required to modify restrictions.
     #[serde(rename="adminManagedRestrictions")]
+    
     pub admin_managed_restrictions: Option<bool>,
     /// Whether the options to copy, print, or download files inside this shared drive, should be disabled for readers and commenters. When this restriction is set to true, it will override the similarly named field to true for any file inside this shared drive.
     #[serde(rename="copyRequiresWriterPermission")]
+    
     pub copy_requires_writer_permission: Option<bool>,
     /// Whether access to this shared drive and items inside this shared drive is restricted to users of the domain to which this shared drive belongs. This restriction may be overridden by other sharing policies controlled outside of this shared drive.
     #[serde(rename="domainUsersOnly")]
+    
     pub domain_users_only: Option<bool>,
     /// Whether access to items inside this shared drive is restricted to its members.
     #[serde(rename="driveMembersOnly")]
+    
     pub drive_members_only: Option<bool>,
 }
 
@@ -1999,115 +2437,152 @@ impl client::Part for DriveRestrictions {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct FileCapabilities {
     /// Whether the current user is the pending owner of the file. Not populated for shared drive files.
     #[serde(rename="canAcceptOwnership")]
+    
     pub can_accept_ownership: Option<bool>,
     /// Whether the current user can add children to this folder. This is always false when the item is not a folder.
     #[serde(rename="canAddChildren")]
+    
     pub can_add_children: Option<bool>,
     /// Whether the current user can add a folder from another drive (different shared drive or My Drive) to this folder. This is false when the item is not a folder. Only populated for items in shared drives.
     #[serde(rename="canAddFolderFromAnotherDrive")]
+    
     pub can_add_folder_from_another_drive: Option<bool>,
     /// Whether the current user can add a parent for the item without removing an existing parent in the same request. Not populated for shared drive files.
     #[serde(rename="canAddMyDriveParent")]
+    
     pub can_add_my_drive_parent: Option<bool>,
     /// Whether the current user can change the copyRequiresWriterPermission restriction of this file.
     #[serde(rename="canChangeCopyRequiresWriterPermission")]
+    
     pub can_change_copy_requires_writer_permission: Option<bool>,
     /// Deprecated
     #[serde(rename="canChangeRestrictedDownload")]
+    
     pub can_change_restricted_download: Option<bool>,
     /// Whether the current user can change the securityUpdateEnabled field on link share metadata.
     #[serde(rename="canChangeSecurityUpdateEnabled")]
+    
     pub can_change_security_update_enabled: Option<bool>,
     /// Whether the current user can comment on this file.
     #[serde(rename="canComment")]
+    
     pub can_comment: Option<bool>,
     /// Whether the current user can copy this file. For an item in a shared drive, whether the current user can copy non-folder descendants of this item, or this item itself if it is not a folder.
     #[serde(rename="canCopy")]
+    
     pub can_copy: Option<bool>,
     /// Whether the current user can delete this file.
     #[serde(rename="canDelete")]
+    
     pub can_delete: Option<bool>,
     /// Whether the current user can delete children of this folder. This is false when the item is not a folder. Only populated for items in shared drives.
     #[serde(rename="canDeleteChildren")]
+    
     pub can_delete_children: Option<bool>,
     /// Whether the current user can download this file.
     #[serde(rename="canDownload")]
+    
     pub can_download: Option<bool>,
     /// Whether the current user can edit this file. Other factors may limit the type of changes a user can make to a file. For example, see canChangeCopyRequiresWriterPermission or canModifyContent.
     #[serde(rename="canEdit")]
+    
     pub can_edit: Option<bool>,
     /// Whether the current user can list the children of this folder. This is always false when the item is not a folder.
     #[serde(rename="canListChildren")]
+    
     pub can_list_children: Option<bool>,
     /// Whether the current user can modify the content of this file.
     #[serde(rename="canModifyContent")]
+    
     pub can_modify_content: Option<bool>,
     /// Whether the current user can modify restrictions on content of this file.
     #[serde(rename="canModifyContentRestriction")]
+    
     pub can_modify_content_restriction: Option<bool>,
     /// Whether the current user can move children of this folder outside of the shared drive. This is false when the item is not a folder. Only populated for items in shared drives.
     #[serde(rename="canMoveChildrenOutOfDrive")]
+    
     pub can_move_children_out_of_drive: Option<bool>,
     /// Deprecated - use canMoveChildrenOutOfDrive instead.
     #[serde(rename="canMoveChildrenOutOfTeamDrive")]
+    
     pub can_move_children_out_of_team_drive: Option<bool>,
     /// Whether the current user can move children of this folder within this drive. This is false when the item is not a folder. Note that a request to move the child may still fail depending on the current user's access to the child and to the destination folder.
     #[serde(rename="canMoveChildrenWithinDrive")]
+    
     pub can_move_children_within_drive: Option<bool>,
     /// Deprecated - use canMoveChildrenWithinDrive instead.
     #[serde(rename="canMoveChildrenWithinTeamDrive")]
+    
     pub can_move_children_within_team_drive: Option<bool>,
     /// Deprecated - use canMoveItemOutOfDrive instead.
     #[serde(rename="canMoveItemIntoTeamDrive")]
+    
     pub can_move_item_into_team_drive: Option<bool>,
     /// Whether the current user can move this item outside of this drive by changing its parent. Note that a request to change the parent of the item may still fail depending on the new parent that is being added.
     #[serde(rename="canMoveItemOutOfDrive")]
+    
     pub can_move_item_out_of_drive: Option<bool>,
     /// Deprecated - use canMoveItemOutOfDrive instead.
     #[serde(rename="canMoveItemOutOfTeamDrive")]
+    
     pub can_move_item_out_of_team_drive: Option<bool>,
     /// Whether the current user can move this item within this drive. Note that a request to change the parent of the item may still fail depending on the new parent that is being added and the parent that is being removed.
     #[serde(rename="canMoveItemWithinDrive")]
+    
     pub can_move_item_within_drive: Option<bool>,
     /// Deprecated - use canMoveItemWithinDrive instead.
     #[serde(rename="canMoveItemWithinTeamDrive")]
+    
     pub can_move_item_within_team_drive: Option<bool>,
     /// Deprecated - use canMoveItemWithinDrive or canMoveItemOutOfDrive instead.
     #[serde(rename="canMoveTeamDriveItem")]
+    
     pub can_move_team_drive_item: Option<bool>,
     /// Whether the current user can read the shared drive to which this file belongs. Only populated for items in shared drives.
     #[serde(rename="canReadDrive")]
+    
     pub can_read_drive: Option<bool>,
     /// Whether the current user can read the revisions resource of this file. For a shared drive item, whether revisions of non-folder descendants of this item, or this item itself if it is not a folder, can be read.
     #[serde(rename="canReadRevisions")]
+    
     pub can_read_revisions: Option<bool>,
     /// Deprecated - use canReadDrive instead.
     #[serde(rename="canReadTeamDrive")]
+    
     pub can_read_team_drive: Option<bool>,
     /// Whether the current user can remove children from this folder. This is always false when the item is not a folder. For a folder in a shared drive, use canDeleteChildren or canTrashChildren instead.
     #[serde(rename="canRemoveChildren")]
+    
     pub can_remove_children: Option<bool>,
     /// Whether the current user can remove a parent from the item without adding another parent in the same request. Not populated for shared drive files.
     #[serde(rename="canRemoveMyDriveParent")]
+    
     pub can_remove_my_drive_parent: Option<bool>,
     /// Whether the current user can rename this file.
     #[serde(rename="canRename")]
+    
     pub can_rename: Option<bool>,
     /// Whether the current user can modify the sharing settings for this file.
     #[serde(rename="canShare")]
+    
     pub can_share: Option<bool>,
     /// Whether the current user can move this file to trash.
     #[serde(rename="canTrash")]
+    
     pub can_trash: Option<bool>,
     /// Whether the current user can trash children of this folder. This is false when the item is not a folder. Only populated for items in shared drives.
     #[serde(rename="canTrashChildren")]
+    
     pub can_trash_children: Option<bool>,
     /// Whether the current user can restore this file from trash.
     #[serde(rename="canUntrash")]
+    
     pub can_untrash: Option<bool>,
 }
 
@@ -2119,62 +2594,84 @@ impl client::Part for FileCapabilities {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct FileImageMediaMetadata {
     /// The aperture used to create the photo (f-number).
+    
     pub aperture: Option<f32>,
     /// The make of the camera used to create the photo.
     #[serde(rename="cameraMake")]
+    
     pub camera_make: Option<String>,
     /// The model of the camera used to create the photo.
     #[serde(rename="cameraModel")]
+    
     pub camera_model: Option<String>,
     /// The color space of the photo.
     #[serde(rename="colorSpace")]
+    
     pub color_space: Option<String>,
     /// The date and time the photo was taken (EXIF format timestamp).
+    
     pub date: Option<String>,
     /// The exposure bias of the photo (APEX value).
     #[serde(rename="exposureBias")]
+    
     pub exposure_bias: Option<f32>,
     /// The exposure mode used to create the photo.
     #[serde(rename="exposureMode")]
+    
     pub exposure_mode: Option<String>,
     /// The length of the exposure, in seconds.
     #[serde(rename="exposureTime")]
+    
     pub exposure_time: Option<f32>,
     /// Whether a flash was used to create the photo.
     #[serde(rename="flashUsed")]
+    
     pub flash_used: Option<bool>,
     /// The focal length used to create the photo, in millimeters.
     #[serde(rename="focalLength")]
+    
     pub focal_length: Option<f32>,
     /// The height of the image in pixels.
+    
     pub height: Option<i32>,
     /// The ISO speed used to create the photo.
     #[serde(rename="isoSpeed")]
+    
     pub iso_speed: Option<i32>,
     /// The lens used to create the photo.
+    
     pub lens: Option<String>,
     /// Geographic location information stored in the image.
+    
     pub location: Option<FileImageMediaMetadataLocation>,
     /// The smallest f-number of the lens at the focal length used to create the photo (APEX value).
     #[serde(rename="maxApertureValue")]
+    
     pub max_aperture_value: Option<f32>,
     /// The metering mode used to create the photo.
     #[serde(rename="meteringMode")]
+    
     pub metering_mode: Option<String>,
     /// The number of clockwise 90 degree rotations applied from the image's original orientation.
+    
     pub rotation: Option<i32>,
     /// The type of sensor used to create the photo.
+    
     pub sensor: Option<String>,
     /// The distance to the subject of the photo, in meters.
     #[serde(rename="subjectDistance")]
+    
     pub subject_distance: Option<i32>,
     /// The white balance mode used to create the photo.
     #[serde(rename="whiteBalance")]
+    
     pub white_balance: Option<String>,
     /// The width of the image in pixels.
+    
     pub width: Option<i32>,
 }
 
@@ -2186,13 +2683,17 @@ impl client::Part for FileImageMediaMetadata {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct FileImageMediaMetadataLocation {
     /// The altitude stored in the image.
+    
     pub altitude: Option<f64>,
     /// The latitude stored in the image.
+    
     pub latitude: Option<f64>,
     /// The longitude stored in the image.
+    
     pub longitude: Option<f64>,
 }
 
@@ -2204,9 +2705,11 @@ impl client::Part for FileImageMediaMetadataLocation {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct FileIndexableText {
     /// The text to be indexed for this file.
+    
     pub text: Option<String>,
 }
 
@@ -2218,19 +2721,26 @@ impl client::Part for FileIndexableText {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct FileLabels {
     /// Deprecated.
+    
     pub hidden: Option<bool>,
     /// Whether the file has been modified by this user.
+    
     pub modified: Option<bool>,
     /// Deprecated - use copyRequiresWriterPermission instead.
+    
     pub restricted: Option<bool>,
     /// Whether this file is starred by the user.
+    
     pub starred: Option<bool>,
     /// Whether the file has been trashed, either explicitly or from a trashed parent folder. Only the owner may trash a file. The trashed item is excluded from all files.list responses returned for any user who does not own the file. However, all users with access to the file can see the trashed item metadata in an API response. All users with access can copy, download, export, and share the file.
+    
     pub trashed: Option<bool>,
     /// Whether this file has been viewed by this user.
+    
     pub viewed: Option<bool>,
 }
 
@@ -2242,13 +2752,16 @@ impl client::Part for FileLabels {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct FileLinkShareMetadata {
     /// Whether the file is eligible for security update.
     #[serde(rename="securityUpdateEligible")]
+    
     pub security_update_eligible: Option<bool>,
     /// Whether the security update is enabled for this file.
     #[serde(rename="securityUpdateEnabled")]
+    
     pub security_update_enabled: Option<bool>,
 }
 
@@ -2260,16 +2773,20 @@ impl client::Part for FileLinkShareMetadata {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct FileShortcutDetails {
     /// The ID of the file that this shortcut points to.
     #[serde(rename="targetId")]
+    
     pub target_id: Option<String>,
     /// The MIME type of the file that this shortcut points to. The value of this field is a snapshot of the target's MIME type, captured when the shortcut is created.
     #[serde(rename="targetMimeType")]
+    
     pub target_mime_type: Option<String>,
     /// The ResourceKey for the target file.
     #[serde(rename="targetResourceKey")]
+    
     pub target_resource_key: Option<String>,
 }
 
@@ -2281,12 +2798,16 @@ impl client::Part for FileShortcutDetails {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct FileThumbnail {
     /// The URL-safe Base64 encoded bytes of the thumbnail image. It should conform to RFC 4648 section 5.
-    pub image: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde::urlsafe_base64::Wrapper>")]
+    pub image: Option<Vec<u8>>,
     /// The MIME type of the thumbnail.
     #[serde(rename="mimeType")]
+    
     pub mime_type: Option<String>,
 }
 
@@ -2298,14 +2819,19 @@ impl client::Part for FileThumbnail {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct FileVideoMediaMetadata {
     /// The duration of the video in milliseconds.
     #[serde(rename="durationMillis")]
-    pub duration_millis: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub duration_millis: Option<i64>,
     /// The height of the video in pixels.
+    
     pub height: Option<i32>,
     /// The width of the video in pixels.
+    
     pub width: Option<i32>,
 }
 
@@ -2317,26 +2843,32 @@ impl client::Part for FileVideoMediaMetadata {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct PermissionPermissionDetails {
     /// Additional roles for this user. Only commenter is currently possible, though more may be supported in the future.
     #[serde(rename="additionalRoles")]
+    
     pub additional_roles: Option<Vec<String>>,
     /// Whether this permission is inherited. This field is always populated. This is an output-only field.
+    
     pub inherited: Option<bool>,
     /// The ID of the item from which this permission is inherited. This is an output-only field.
     #[serde(rename="inheritedFrom")]
+    
     pub inherited_from: Option<String>,
     /// The permission type for this user. While new values may be added in future, the following are currently possible:  
     /// - file 
     /// - member
     #[serde(rename="permissionType")]
+    
     pub permission_type: Option<String>,
     /// The primary role for this user. While new values may be added in the future, the following are currently possible:  
     /// - organizer 
     /// - fileOrganizer 
     /// - writer 
     /// - reader
+    
     pub role: Option<String>,
 }
 
@@ -2348,20 +2880,26 @@ impl client::Part for PermissionPermissionDetails {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct PermissionTeamDrivePermissionDetails {
     /// Deprecated - use permissionDetails/additionalRoles instead.
     #[serde(rename="additionalRoles")]
+    
     pub additional_roles: Option<Vec<String>>,
     /// Deprecated - use permissionDetails/inherited instead.
+    
     pub inherited: Option<bool>,
     /// Deprecated - use permissionDetails/inheritedFrom instead.
     #[serde(rename="inheritedFrom")]
+    
     pub inherited_from: Option<String>,
     /// Deprecated - use permissionDetails/role instead.
+    
     pub role: Option<String>,
     /// Deprecated - use permissionDetails/permissionType instead.
     #[serde(rename="teamDrivePermissionType")]
+    
     pub team_drive_permission_type: Option<String>,
 }
 
@@ -2373,17 +2911,22 @@ impl client::Part for PermissionTeamDrivePermissionDetails {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct TeamDriveBackgroundImageFile {
     /// The ID of an image file in Drive to use for the background image.
+    
     pub id: Option<String>,
     /// The width of the cropped image in the closed range of 0 to 1. This value represents the width of the cropped image divided by the width of the entire image. The height is computed by applying a width to height aspect ratio of 80 to 9. The resulting image must be at least 1280 pixels wide and 144 pixels high.
+    
     pub width: Option<f32>,
     /// The X coordinate of the upper left corner of the cropping area in the background image. This is a value in the closed range of 0 to 1. This value represents the horizontal distance from the left side of the entire image to the left side of the cropping area divided by the width of the entire image.
     #[serde(rename="xCoordinate")]
+    
     pub x_coordinate: Option<f32>,
     /// The Y coordinate of the upper left corner of the cropping area in the background image. This is a value in the closed range of 0 to 1. This value represents the vertical distance from the top side of the entire image to the top side of the cropping area divided by the height of the entire image.
     #[serde(rename="yCoordinate")]
+    
     pub y_coordinate: Option<f32>,
 }
 
@@ -2395,64 +2938,84 @@ impl client::Part for TeamDriveBackgroundImageFile {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct TeamDriveCapabilities {
     /// Whether the current user can add children to folders in this Team Drive.
     #[serde(rename="canAddChildren")]
+    
     pub can_add_children: Option<bool>,
     /// Whether the current user can change the copyRequiresWriterPermission restriction of this Team Drive.
     #[serde(rename="canChangeCopyRequiresWriterPermissionRestriction")]
+    
     pub can_change_copy_requires_writer_permission_restriction: Option<bool>,
     /// Whether the current user can change the domainUsersOnly restriction of this Team Drive.
     #[serde(rename="canChangeDomainUsersOnlyRestriction")]
+    
     pub can_change_domain_users_only_restriction: Option<bool>,
     /// Whether the current user can change the background of this Team Drive.
     #[serde(rename="canChangeTeamDriveBackground")]
+    
     pub can_change_team_drive_background: Option<bool>,
     /// Whether the current user can change the teamMembersOnly restriction of this Team Drive.
     #[serde(rename="canChangeTeamMembersOnlyRestriction")]
+    
     pub can_change_team_members_only_restriction: Option<bool>,
     /// Whether the current user can comment on files in this Team Drive.
     #[serde(rename="canComment")]
+    
     pub can_comment: Option<bool>,
     /// Whether the current user can copy files in this Team Drive.
     #[serde(rename="canCopy")]
+    
     pub can_copy: Option<bool>,
     /// Whether the current user can delete children from folders in this Team Drive.
     #[serde(rename="canDeleteChildren")]
+    
     pub can_delete_children: Option<bool>,
     /// Whether the current user can delete this Team Drive. Attempting to delete the Team Drive may still fail if there are untrashed items inside the Team Drive.
     #[serde(rename="canDeleteTeamDrive")]
+    
     pub can_delete_team_drive: Option<bool>,
     /// Whether the current user can download files in this Team Drive.
     #[serde(rename="canDownload")]
+    
     pub can_download: Option<bool>,
     /// Whether the current user can edit files in this Team Drive
     #[serde(rename="canEdit")]
+    
     pub can_edit: Option<bool>,
     /// Whether the current user can list the children of folders in this Team Drive.
     #[serde(rename="canListChildren")]
+    
     pub can_list_children: Option<bool>,
     /// Whether the current user can add members to this Team Drive or remove them or change their role.
     #[serde(rename="canManageMembers")]
+    
     pub can_manage_members: Option<bool>,
     /// Whether the current user can read the revisions resource of files in this Team Drive.
     #[serde(rename="canReadRevisions")]
+    
     pub can_read_revisions: Option<bool>,
     /// Deprecated - use canDeleteChildren or canTrashChildren instead.
     #[serde(rename="canRemoveChildren")]
+    
     pub can_remove_children: Option<bool>,
     /// Whether the current user can rename files or folders in this Team Drive.
     #[serde(rename="canRename")]
+    
     pub can_rename: Option<bool>,
     /// Whether the current user can rename this Team Drive.
     #[serde(rename="canRenameTeamDrive")]
+    
     pub can_rename_team_drive: Option<bool>,
     /// Whether the current user can share files or folders in this Team Drive.
     #[serde(rename="canShare")]
+    
     pub can_share: Option<bool>,
     /// Whether the current user can trash children from folders in this Team Drive.
     #[serde(rename="canTrashChildren")]
+    
     pub can_trash_children: Option<bool>,
 }
 
@@ -2464,19 +3027,24 @@ impl client::Part for TeamDriveCapabilities {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct TeamDriveRestrictions {
     /// Whether administrative privileges on this Team Drive are required to modify restrictions.
     #[serde(rename="adminManagedRestrictions")]
+    
     pub admin_managed_restrictions: Option<bool>,
     /// Whether the options to copy, print, or download files inside this Team Drive, should be disabled for readers and commenters. When this restriction is set to true, it will override the similarly named field to true for any file inside this Team Drive.
     #[serde(rename="copyRequiresWriterPermission")]
+    
     pub copy_requires_writer_permission: Option<bool>,
     /// Whether access to this Team Drive and items inside this Team Drive is restricted to users of the domain to which this Team Drive belongs. This restriction may be overridden by other sharing policies controlled outside of this Team Drive.
     #[serde(rename="domainUsersOnly")]
+    
     pub domain_users_only: Option<bool>,
     /// Whether access to items inside this Team Drive is restricted to members of this Team Drive.
     #[serde(rename="teamMembersOnly")]
+    
     pub team_members_only: Option<bool>,
 }
 
@@ -2488,9 +3056,11 @@ impl client::Part for TeamDriveRestrictions {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct UserPicture {
     /// A URL that points to a profile picture of this user.
+    
     pub url: Option<String>,
 }
 
@@ -2504,7 +3074,7 @@ impl client::Part for UserPicture {}
 // #################
 
 /// A builder providing access to all methods supported on *about* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -2517,7 +3087,7 @@ impl client::Part for UserPicture {}
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2560,7 +3130,7 @@ impl<'a, S> AboutMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *app* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -2573,7 +3143,7 @@ impl<'a, S> AboutMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2633,7 +3203,7 @@ impl<'a, S> AppMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *change* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -2646,7 +3216,7 @@ impl<'a, S> AppMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2768,7 +3338,7 @@ impl<'a, S> ChangeMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *channel* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -2781,7 +3351,7 @@ impl<'a, S> ChangeMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2825,8 +3395,8 @@ impl<'a, S> ChannelMethods<'a, S> {
 
 
 
-/// A builder providing access to all methods supported on *children* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// A builder providing access to all methods supported on *child* resources.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -2839,7 +3409,7 @@ impl<'a, S> ChannelMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -2853,15 +3423,15 @@ impl<'a, S> ChannelMethods<'a, S> {
 /// let rb = hub.children();
 /// # }
 /// ```
-pub struct ChildrenMethods<'a, S>
+pub struct ChildMethods<'a, S>
     where S: 'a {
 
     hub: &'a DriveHub<S>,
 }
 
-impl<'a, S> client::MethodsBuilder for ChildrenMethods<'a, S> {}
+impl<'a, S> client::MethodsBuilder for ChildMethods<'a, S> {}
 
-impl<'a, S> ChildrenMethods<'a, S> {
+impl<'a, S> ChildMethods<'a, S> {
     
     /// Create a builder to help you perform the following task:
     ///
@@ -2871,8 +3441,8 @@ impl<'a, S> ChildrenMethods<'a, S> {
     ///
     /// * `folderId` - The ID of the folder.
     /// * `childId` - The ID of the child.
-    pub fn delete(&self, folder_id: &str, child_id: &str) -> ChildrenDeleteCall<'a, S> {
-        ChildrenDeleteCall {
+    pub fn delete(&self, folder_id: &str, child_id: &str) -> ChildDeleteCall<'a, S> {
+        ChildDeleteCall {
             hub: self.hub,
             _folder_id: folder_id.to_string(),
             _child_id: child_id.to_string(),
@@ -2891,8 +3461,8 @@ impl<'a, S> ChildrenMethods<'a, S> {
     ///
     /// * `folderId` - The ID of the folder.
     /// * `childId` - The ID of the child.
-    pub fn get(&self, folder_id: &str, child_id: &str) -> ChildrenGetCall<'a, S> {
-        ChildrenGetCall {
+    pub fn get(&self, folder_id: &str, child_id: &str) -> ChildGetCall<'a, S> {
+        ChildGetCall {
             hub: self.hub,
             _folder_id: folder_id.to_string(),
             _child_id: child_id.to_string(),
@@ -2910,8 +3480,8 @@ impl<'a, S> ChildrenMethods<'a, S> {
     ///
     /// * `request` - No description provided.
     /// * `folderId` - The ID of the folder.
-    pub fn insert(&self, request: ChildReference, folder_id: &str) -> ChildrenInsertCall<'a, S> {
-        ChildrenInsertCall {
+    pub fn insert(&self, request: ChildReference, folder_id: &str) -> ChildInsertCall<'a, S> {
+        ChildInsertCall {
             hub: self.hub,
             _request: request,
             _folder_id: folder_id.to_string(),
@@ -2931,8 +3501,8 @@ impl<'a, S> ChildrenMethods<'a, S> {
     /// # Arguments
     ///
     /// * `folderId` - The ID of the folder.
-    pub fn list(&self, folder_id: &str) -> ChildrenListCall<'a, S> {
-        ChildrenListCall {
+    pub fn list(&self, folder_id: &str) -> ChildListCall<'a, S> {
+        ChildListCall {
             hub: self.hub,
             _folder_id: folder_id.to_string(),
             _q: Default::default(),
@@ -2949,7 +3519,7 @@ impl<'a, S> ChildrenMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *comment* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -2962,7 +3532,7 @@ impl<'a, S> ChildrenMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3111,7 +3681,7 @@ impl<'a, S> CommentMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *drive* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -3124,7 +3694,7 @@ impl<'a, S> CommentMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3276,7 +3846,7 @@ impl<'a, S> DriveMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *file* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -3289,7 +3859,7 @@ impl<'a, S> DriveMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3652,7 +4222,7 @@ impl<'a, S> FileMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *parent* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -3665,7 +4235,7 @@ impl<'a, S> FileMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3771,7 +4341,7 @@ impl<'a, S> ParentMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *permission* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -3784,7 +4354,7 @@ impl<'a, S> ParentMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3974,7 +4544,7 @@ impl<'a, S> PermissionMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *property* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -3987,7 +4557,7 @@ impl<'a, S> PermissionMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4135,7 +4705,7 @@ impl<'a, S> PropertyMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *reply* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -4148,7 +4718,7 @@ impl<'a, S> PropertyMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4308,7 +4878,7 @@ impl<'a, S> ReplyMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *revision* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -4321,7 +4891,7 @@ impl<'a, S> ReplyMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4448,7 +5018,7 @@ impl<'a, S> RevisionMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *teamdrive* resources.
-/// It is not used directly, but through the `DriveHub` hub.
+/// It is not used directly, but through the [`DriveHub`] hub.
 ///
 /// # Example
 ///
@@ -4461,7 +5031,7 @@ impl<'a, S> RevisionMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4587,7 +5157,7 @@ impl<'a, S> TeamdriveMethods<'a, S> {
 /// Gets the information about the current user along with Drive API settings
 ///
 /// A builder for the *get* method supported by a *about* resource.
-/// It is not used directly, but through a `AboutMethods` instance.
+/// It is not used directly, but through a [`AboutMethods`] instance.
 ///
 /// # Example
 ///
@@ -4599,7 +5169,7 @@ impl<'a, S> TeamdriveMethods<'a, S> {
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4611,8 +5181,8 @@ impl<'a, S> TeamdriveMethods<'a, S> {
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.about().get()
-///              .start_change_id("takimata")
-///              .max_change_id_count("consetetur")
+///              .start_change_id(-59)
+///              .max_change_id_count(-46)
 ///              .include_subscribed(false)
 ///              .doit().await;
 /// # }
@@ -4621,19 +5191,19 @@ pub struct AboutGetCall<'a, S>
     where S: 'a {
 
     hub: &'a DriveHub<S>,
-    _start_change_id: Option<String>,
-    _max_change_id_count: Option<String>,
+    _start_change_id: Option<i64>,
+    _max_change_id_count: Option<i64>,
     _include_subscribed: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for AboutGetCall<'a, S> {}
 
 impl<'a, S> AboutGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -4644,55 +5214,54 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, About)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.about.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        if let Some(value) = self._start_change_id {
-            params.push(("startChangeId", value.to_string()));
-        }
-        if let Some(value) = self._max_change_id_count {
-            params.push(("maxChangeIdCount", value.to_string()));
-        }
-        if let Some(value) = self._include_subscribed {
-            params.push(("includeSubscribed", value.to_string()));
-        }
+
         for &field in ["alt", "startChangeId", "maxChangeIdCount", "includeSubscribed"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        if let Some(value) = self._start_change_id.as_ref() {
+            params.push("startChangeId", value.to_string());
+        }
+        if let Some(value) = self._max_change_id_count.as_ref() {
+            params.push("maxChangeIdCount", value.to_string());
+        }
+        if let Some(value) = self._include_subscribed.as_ref() {
+            params.push("includeSubscribed", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "about";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -4700,21 +5269,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -4730,7 +5305,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -4764,15 +5339,15 @@ where
     /// Change ID to start counting from when calculating number of remaining change IDs
     ///
     /// Sets the *start change id* query property to the given value.
-    pub fn start_change_id(mut self, new_value: &str) -> AboutGetCall<'a, S> {
-        self._start_change_id = Some(new_value.to_string());
+    pub fn start_change_id(mut self, new_value: i64) -> AboutGetCall<'a, S> {
+        self._start_change_id = Some(new_value);
         self
     }
     /// Maximum number of remaining change IDs to count
     ///
     /// Sets the *max change id count* query property to the given value.
-    pub fn max_change_id_count(mut self, new_value: &str) -> AboutGetCall<'a, S> {
-        self._max_change_id_count = Some(new_value.to_string());
+    pub fn max_change_id_count(mut self, new_value: i64) -> AboutGetCall<'a, S> {
+        self._max_change_id_count = Some(new_value);
         self
     }
     /// Whether to count changes outside the My Drive hierarchy. When set to false, changes to files such as those in the Application Data folder or shared files which have not been added to My Drive will be omitted from the maxChangeIdCount.
@@ -4785,7 +5360,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> AboutGetCall<'a, S> {
@@ -4817,25 +5393,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::MetadataReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::MetadataReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> AboutGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> AboutGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> AboutGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> AboutGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -4844,7 +5431,7 @@ where
 /// Gets a specific app.
 ///
 /// A builder for the *get* method supported by a *app* resource.
-/// It is not used directly, but through a `AppMethods` instance.
+/// It is not used directly, but through a [`AppMethods`] instance.
 ///
 /// # Example
 ///
@@ -4856,7 +5443,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4878,14 +5465,14 @@ pub struct AppGetCall<'a, S>
     _app_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for AppGetCall<'a, S> {}
 
 impl<'a, S> AppGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -4896,68 +5483,53 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, App)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.apps.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("appId", self._app_id.to_string()));
+
         for &field in ["alt", "appId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("appId", self._app_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "apps/{appId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::AppReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::AppReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{appId}", "appId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["appId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["appId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -4965,21 +5537,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -4995,7 +5573,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5039,7 +5617,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> AppGetCall<'a, S> {
@@ -5071,25 +5650,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::AppReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::AppReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> AppGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> AppGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> AppGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> AppGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5098,7 +5688,7 @@ where
 /// Lists a user's installed apps.
 ///
 /// A builder for the *list* method supported by a *app* resource.
-/// It is not used directly, but through a `AppMethods` instance.
+/// It is not used directly, but through a [`AppMethods`] instance.
 ///
 /// # Example
 ///
@@ -5110,7 +5700,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5137,14 +5727,14 @@ pub struct AppListCall<'a, S>
     _app_filter_extensions: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for AppListCall<'a, S> {}
 
 impl<'a, S> AppListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -5155,55 +5745,54 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, AppList)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.apps.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        if let Some(value) = self._language_code {
-            params.push(("languageCode", value.to_string()));
-        }
-        if let Some(value) = self._app_filter_mime_types {
-            params.push(("appFilterMimeTypes", value.to_string()));
-        }
-        if let Some(value) = self._app_filter_extensions {
-            params.push(("appFilterExtensions", value.to_string()));
-        }
+
         for &field in ["alt", "languageCode", "appFilterMimeTypes", "appFilterExtensions"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        if let Some(value) = self._language_code.as_ref() {
+            params.push("languageCode", value);
+        }
+        if let Some(value) = self._app_filter_mime_types.as_ref() {
+            params.push("appFilterMimeTypes", value);
+        }
+        if let Some(value) = self._app_filter_extensions.as_ref() {
+            params.push("appFilterExtensions", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "apps";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::AppReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::AppReadonly.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -5211,21 +5800,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -5241,7 +5836,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5296,7 +5891,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> AppListCall<'a, S> {
@@ -5328,25 +5924,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::AppReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::AppReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> AppListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> AppListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> AppListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> AppListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5355,7 +5962,7 @@ where
 /// Deprecated - Use changes.getStartPageToken and changes.list to retrieve recent changes.
 ///
 /// A builder for the *get* method supported by a *change* resource.
-/// It is not used directly, but through a `ChangeMethods` instance.
+/// It is not used directly, but through a [`ChangeMethods`] instance.
 ///
 /// # Example
 ///
@@ -5367,7 +5974,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5397,14 +6004,14 @@ pub struct ChangeGetCall<'a, S>
     _drive_id: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ChangeGetCall<'a, S> {}
 
 impl<'a, S> ChangeGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -5415,80 +6022,65 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Change)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.changes.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("changeId", self._change_id.to_string()));
-        if let Some(value) = self._team_drive_id {
-            params.push(("teamDriveId", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._drive_id {
-            params.push(("driveId", value.to_string()));
-        }
+
         for &field in ["alt", "changeId", "teamDriveId", "supportsTeamDrives", "supportsAllDrives", "driveId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("changeId", self._change_id);
+        if let Some(value) = self._team_drive_id.as_ref() {
+            params.push("teamDriveId", value);
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._drive_id.as_ref() {
+            params.push("driveId", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "changes/{changeId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::AppReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::AppReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{changeId}", "changeId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["changeId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["changeId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -5496,21 +6088,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -5526,7 +6124,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5598,7 +6196,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChangeGetCall<'a, S> {
@@ -5630,25 +6229,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::AppReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::AppReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ChangeGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ChangeGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ChangeGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ChangeGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5657,7 +6267,7 @@ where
 /// Gets the starting pageToken for listing future changes.
 ///
 /// A builder for the *getStartPageToken* method supported by a *change* resource.
-/// It is not used directly, but through a `ChangeMethods` instance.
+/// It is not used directly, but through a [`ChangeMethods`] instance.
 ///
 /// # Example
 ///
@@ -5669,7 +6279,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5698,14 +6308,14 @@ pub struct ChangeGetStartPageTokenCall<'a, S>
     _drive_id: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ChangeGetStartPageTokenCall<'a, S> {}
 
 impl<'a, S> ChangeGetStartPageTokenCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -5716,58 +6326,57 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, StartPageToken)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.changes.getStartPageToken",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        if let Some(value) = self._team_drive_id {
-            params.push(("teamDriveId", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._drive_id {
-            params.push(("driveId", value.to_string()));
-        }
+
         for &field in ["alt", "teamDriveId", "supportsTeamDrives", "supportsAllDrives", "driveId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        if let Some(value) = self._team_drive_id.as_ref() {
+            params.push("teamDriveId", value);
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._drive_id.as_ref() {
+            params.push("driveId", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "changes/startPageToken";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::AppReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::AppReadonly.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -5775,21 +6384,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -5805,7 +6420,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5867,7 +6482,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChangeGetStartPageTokenCall<'a, S> {
@@ -5899,25 +6515,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::AppReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::AppReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ChangeGetStartPageTokenCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ChangeGetStartPageTokenCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ChangeGetStartPageTokenCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ChangeGetStartPageTokenCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5926,7 +6553,7 @@ where
 /// Lists the changes for a user or shared drive.
 ///
 /// A builder for the *list* method supported by a *change* resource.
-/// It is not used directly, but through a `ChangeMethods` instance.
+/// It is not used directly, but through a [`ChangeMethods`] instance.
 ///
 /// # Example
 ///
@@ -5938,7 +6565,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5953,7 +6580,7 @@ where
 ///              .team_drive_id("invidunt")
 ///              .supports_team_drives(true)
 ///              .supports_all_drives(false)
-///              .start_change_id("et")
+///              .start_change_id(-35)
 ///              .spaces("tempor")
 ///              .page_token("aliquyam")
 ///              .max_results(-5)
@@ -5974,7 +6601,7 @@ pub struct ChangeListCall<'a, S>
     _team_drive_id: Option<String>,
     _supports_team_drives: Option<bool>,
     _supports_all_drives: Option<bool>,
-    _start_change_id: Option<String>,
+    _start_change_id: Option<i64>,
     _spaces: Option<String>,
     _page_token: Option<String>,
     _max_results: Option<i32>,
@@ -5987,14 +6614,14 @@ pub struct ChangeListCall<'a, S>
     _drive_id: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ChangeListCall<'a, S> {}
 
 impl<'a, S> ChangeListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -6005,88 +6632,87 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ChangeList)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.changes.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(16 + self._additional_params.len());
-        if let Some(value) = self._team_drive_id {
-            params.push(("teamDriveId", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._start_change_id {
-            params.push(("startChangeId", value.to_string()));
-        }
-        if let Some(value) = self._spaces {
-            params.push(("spaces", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
-        if let Some(value) = self._include_team_drive_items {
-            params.push(("includeTeamDriveItems", value.to_string()));
-        }
-        if let Some(value) = self._include_subscribed {
-            params.push(("includeSubscribed", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
-        if let Some(value) = self._include_items_from_all_drives {
-            params.push(("includeItemsFromAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._include_deleted {
-            params.push(("includeDeleted", value.to_string()));
-        }
-        if let Some(value) = self._include_corpus_removals {
-            params.push(("includeCorpusRemovals", value.to_string()));
-        }
-        if let Some(value) = self._drive_id {
-            params.push(("driveId", value.to_string()));
-        }
+
         for &field in ["alt", "teamDriveId", "supportsTeamDrives", "supportsAllDrives", "startChangeId", "spaces", "pageToken", "maxResults", "includeTeamDriveItems", "includeSubscribed", "includePermissionsForView", "includeItemsFromAllDrives", "includeDeleted", "includeCorpusRemovals", "driveId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(16 + self._additional_params.len());
+        if let Some(value) = self._team_drive_id.as_ref() {
+            params.push("teamDriveId", value);
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._start_change_id.as_ref() {
+            params.push("startChangeId", value.to_string());
+        }
+        if let Some(value) = self._spaces.as_ref() {
+            params.push("spaces", value);
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
+        }
+        if let Some(value) = self._include_team_drive_items.as_ref() {
+            params.push("includeTeamDriveItems", value.to_string());
+        }
+        if let Some(value) = self._include_subscribed.as_ref() {
+            params.push("includeSubscribed", value.to_string());
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
+        }
+        if let Some(value) = self._include_items_from_all_drives.as_ref() {
+            params.push("includeItemsFromAllDrives", value.to_string());
+        }
+        if let Some(value) = self._include_deleted.as_ref() {
+            params.push("includeDeleted", value.to_string());
+        }
+        if let Some(value) = self._include_corpus_removals.as_ref() {
+            params.push("includeCorpusRemovals", value.to_string());
+        }
+        if let Some(value) = self._drive_id.as_ref() {
+            params.push("driveId", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "changes";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::AppReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::AppReadonly.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -6094,21 +6720,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -6124,7 +6756,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -6179,8 +6811,8 @@ where
     /// Deprecated - use pageToken instead.
     ///
     /// Sets the *start change id* query property to the given value.
-    pub fn start_change_id(mut self, new_value: &str) -> ChangeListCall<'a, S> {
-        self._start_change_id = Some(new_value.to_string());
+    pub fn start_change_id(mut self, new_value: i64) -> ChangeListCall<'a, S> {
+        self._start_change_id = Some(new_value);
         self
     }
     /// A comma-separated list of spaces to query. Supported values are 'drive', 'appDataFolder' and 'photos'.
@@ -6256,7 +6888,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChangeListCall<'a, S> {
@@ -6288,25 +6921,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::AppReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::AppReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ChangeListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ChangeListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ChangeListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ChangeListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -6315,7 +6959,7 @@ where
 /// Subscribe to changes for a user.
 ///
 /// A builder for the *watch* method supported by a *change* resource.
-/// It is not used directly, but through a `ChangeMethods` instance.
+/// It is not used directly, but through a [`ChangeMethods`] instance.
 ///
 /// # Example
 ///
@@ -6328,7 +6972,7 @@ where
 /// use drive2::api::Channel;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -6348,7 +6992,7 @@ where
 ///              .team_drive_id("no")
 ///              .supports_team_drives(false)
 ///              .supports_all_drives(false)
-///              .start_change_id("sadipscing")
+///              .start_change_id(-45)
 ///              .spaces("aliquyam")
 ///              .page_token("dolores")
 ///              .max_results(-95)
@@ -6370,7 +7014,7 @@ pub struct ChangeWatchCall<'a, S>
     _team_drive_id: Option<String>,
     _supports_team_drives: Option<bool>,
     _supports_all_drives: Option<bool>,
-    _start_change_id: Option<String>,
+    _start_change_id: Option<i64>,
     _spaces: Option<String>,
     _page_token: Option<String>,
     _max_results: Option<i32>,
@@ -6383,14 +7027,14 @@ pub struct ChangeWatchCall<'a, S>
     _drive_id: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ChangeWatchCall<'a, S> {}
 
 impl<'a, S> ChangeWatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -6401,78 +7045,77 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Channel)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.changes.watch",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(17 + self._additional_params.len());
-        if let Some(value) = self._team_drive_id {
-            params.push(("teamDriveId", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._start_change_id {
-            params.push(("startChangeId", value.to_string()));
-        }
-        if let Some(value) = self._spaces {
-            params.push(("spaces", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
-        if let Some(value) = self._include_team_drive_items {
-            params.push(("includeTeamDriveItems", value.to_string()));
-        }
-        if let Some(value) = self._include_subscribed {
-            params.push(("includeSubscribed", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
-        if let Some(value) = self._include_items_from_all_drives {
-            params.push(("includeItemsFromAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._include_deleted {
-            params.push(("includeDeleted", value.to_string()));
-        }
-        if let Some(value) = self._include_corpus_removals {
-            params.push(("includeCorpusRemovals", value.to_string()));
-        }
-        if let Some(value) = self._drive_id {
-            params.push(("driveId", value.to_string()));
-        }
+
         for &field in ["alt", "teamDriveId", "supportsTeamDrives", "supportsAllDrives", "startChangeId", "spaces", "pageToken", "maxResults", "includeTeamDriveItems", "includeSubscribed", "includePermissionsForView", "includeItemsFromAllDrives", "includeDeleted", "includeCorpusRemovals", "driveId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(17 + self._additional_params.len());
+        if let Some(value) = self._team_drive_id.as_ref() {
+            params.push("teamDriveId", value);
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._start_change_id.as_ref() {
+            params.push("startChangeId", value.to_string());
+        }
+        if let Some(value) = self._spaces.as_ref() {
+            params.push("spaces", value);
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
+        }
+        if let Some(value) = self._include_team_drive_items.as_ref() {
+            params.push("includeTeamDriveItems", value.to_string());
+        }
+        if let Some(value) = self._include_subscribed.as_ref() {
+            params.push("includeSubscribed", value.to_string());
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
+        }
+        if let Some(value) = self._include_items_from_all_drives.as_ref() {
+            params.push("includeItemsFromAllDrives", value.to_string());
+        }
+        if let Some(value) = self._include_deleted.as_ref() {
+            params.push("includeDeleted", value.to_string());
+        }
+        if let Some(value) = self._include_corpus_removals.as_ref() {
+            params.push("includeCorpusRemovals", value.to_string());
+        }
+        if let Some(value) = self._drive_id.as_ref() {
+            params.push("driveId", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "changes/watch";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -6486,14 +7129,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -6502,23 +7145,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -6534,7 +7183,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -6598,8 +7247,8 @@ where
     /// Deprecated - use pageToken instead.
     ///
     /// Sets the *start change id* query property to the given value.
-    pub fn start_change_id(mut self, new_value: &str) -> ChangeWatchCall<'a, S> {
-        self._start_change_id = Some(new_value.to_string());
+    pub fn start_change_id(mut self, new_value: i64) -> ChangeWatchCall<'a, S> {
+        self._start_change_id = Some(new_value);
         self
     }
     /// A comma-separated list of spaces to query. Supported values are 'drive', 'appDataFolder' and 'photos'.
@@ -6675,7 +7324,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChangeWatchCall<'a, S> {
@@ -6707,25 +7357,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ChangeWatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ChangeWatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ChangeWatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ChangeWatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -6734,7 +7395,7 @@ where
 /// Stop watching resources through this channel
 ///
 /// A builder for the *stop* method supported by a *channel* resource.
-/// It is not used directly, but through a `ChannelMethods` instance.
+/// It is not used directly, but through a [`ChannelMethods`] instance.
 ///
 /// # Example
 ///
@@ -6747,7 +7408,7 @@ where
 /// use drive2::api::Channel;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -6774,14 +7435,14 @@ pub struct ChannelStopCall<'a, S>
     _request: Channel,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ChannelStopCall<'a, S> {}
 
 impl<'a, S> ChannelStopCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -6792,35 +7453,34 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.channels.stop",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(2 + self._additional_params.len());
+
         for &field in [].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
+        let mut params = Params::with_capacity(2 + self._additional_params.len());
+
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "channels/stop";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -6834,14 +7494,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -6850,23 +7510,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -6882,7 +7548,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -6915,7 +7581,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChannelStopCall<'a, S> {
@@ -6947,25 +7614,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ChannelStopCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ChannelStopCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ChannelStopCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ChannelStopCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -6973,8 +7651,8 @@ where
 
 /// Removes a child from a folder.
 ///
-/// A builder for the *delete* method supported by a *children* resource.
-/// It is not used directly, but through a `ChildrenMethods` instance.
+/// A builder for the *delete* method supported by a *child* resource.
+/// It is not used directly, but through a [`ChildMethods`] instance.
 ///
 /// # Example
 ///
@@ -6986,7 +7664,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7002,7 +7680,7 @@ where
 ///              .doit().await;
 /// # }
 /// ```
-pub struct ChildrenDeleteCall<'a, S>
+pub struct ChildDeleteCall<'a, S>
     where S: 'a {
 
     hub: &'a DriveHub<S>,
@@ -7011,14 +7689,14 @@ pub struct ChildrenDeleteCall<'a, S>
     _enforce_single_parent: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
-impl<'a, S> client::CallBuilder for ChildrenDeleteCall<'a, S> {}
+impl<'a, S> client::CallBuilder for ChildDeleteCall<'a, S> {}
 
-impl<'a, S> ChildrenDeleteCall<'a, S>
+impl<'a, S> ChildDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7029,71 +7707,56 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.children.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("folderId", self._folder_id.to_string()));
-        params.push(("childId", self._child_id.to_string()));
-        if let Some(value) = self._enforce_single_parent {
-            params.push(("enforceSingleParent", value.to_string()));
-        }
+
         for &field in ["folderId", "childId", "enforceSingleParent"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("folderId", self._folder_id);
+        params.push("childId", self._child_id);
+        if let Some(value) = self._enforce_single_parent.as_ref() {
+            params.push("enforceSingleParent", value.to_string());
         }
 
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "files/{folderId}/children/{childId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{folderId}", "folderId"), ("{childId}", "childId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["childId", "folderId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["childId", "folderId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -7101,21 +7764,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -7131,7 +7800,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -7158,7 +7827,7 @@ where
     ///
     /// Even though the property as already been set when instantiating this call,
     /// we provide this method for API completeness.
-    pub fn folder_id(mut self, new_value: &str) -> ChildrenDeleteCall<'a, S> {
+    pub fn folder_id(mut self, new_value: &str) -> ChildDeleteCall<'a, S> {
         self._folder_id = new_value.to_string();
         self
     }
@@ -7168,24 +7837,25 @@ where
     ///
     /// Even though the property as already been set when instantiating this call,
     /// we provide this method for API completeness.
-    pub fn child_id(mut self, new_value: &str) -> ChildrenDeleteCall<'a, S> {
+    pub fn child_id(mut self, new_value: &str) -> ChildDeleteCall<'a, S> {
         self._child_id = new_value.to_string();
         self
     }
     /// Deprecated. If an item is not in a shared drive and its last parent is deleted but the item itself is not, the item will be placed under its owner's root.
     ///
     /// Sets the *enforce single parent* query property to the given value.
-    pub fn enforce_single_parent(mut self, new_value: bool) -> ChildrenDeleteCall<'a, S> {
+    pub fn enforce_single_parent(mut self, new_value: bool) -> ChildDeleteCall<'a, S> {
         self._enforce_single_parent = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
-    pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChildrenDeleteCall<'a, S> {
+    pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChildDeleteCall<'a, S> {
         self._delegate = Some(new_value);
         self
     }
@@ -7206,7 +7876,7 @@ where
     /// * *prettyPrint* (query-boolean) - Returns response with indentations and line breaks.
     /// * *quotaUser* (query-string) - An opaque string that represents a user for quota purposes. Must not exceed 40 characters.
     /// * *userIp* (query-string) - Deprecated. Please use quotaUser instead.
-    pub fn param<T>(mut self, name: T, value: T) -> ChildrenDeleteCall<'a, S>
+    pub fn param<T>(mut self, name: T, value: T) -> ChildDeleteCall<'a, S>
                                                         where T: AsRef<str> {
         self._additional_params.insert(name.as_ref().to_string(), value.as_ref().to_string());
         self
@@ -7214,25 +7884,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ChildrenDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ChildDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ChildDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ChildDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7240,8 +7921,8 @@ where
 
 /// Gets a specific child reference.
 ///
-/// A builder for the *get* method supported by a *children* resource.
-/// It is not used directly, but through a `ChildrenMethods` instance.
+/// A builder for the *get* method supported by a *child* resource.
+/// It is not used directly, but through a [`ChildMethods`] instance.
 ///
 /// # Example
 ///
@@ -7253,7 +7934,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7268,7 +7949,7 @@ where
 ///              .doit().await;
 /// # }
 /// ```
-pub struct ChildrenGetCall<'a, S>
+pub struct ChildGetCall<'a, S>
     where S: 'a {
 
     hub: &'a DriveHub<S>,
@@ -7276,14 +7957,14 @@ pub struct ChildrenGetCall<'a, S>
     _child_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
-impl<'a, S> client::CallBuilder for ChildrenGetCall<'a, S> {}
+impl<'a, S> client::CallBuilder for ChildGetCall<'a, S> {}
 
-impl<'a, S> ChildrenGetCall<'a, S>
+impl<'a, S> ChildGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7294,69 +7975,54 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ChildReference)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.children.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("folderId", self._folder_id.to_string()));
-        params.push(("childId", self._child_id.to_string()));
+
         for &field in ["alt", "folderId", "childId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("folderId", self._folder_id);
+        params.push("childId", self._child_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{folderId}/children/{childId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{folderId}", "folderId"), ("{childId}", "childId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["childId", "folderId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["childId", "folderId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -7364,21 +8030,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -7394,7 +8066,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -7431,7 +8103,7 @@ where
     ///
     /// Even though the property as already been set when instantiating this call,
     /// we provide this method for API completeness.
-    pub fn folder_id(mut self, new_value: &str) -> ChildrenGetCall<'a, S> {
+    pub fn folder_id(mut self, new_value: &str) -> ChildGetCall<'a, S> {
         self._folder_id = new_value.to_string();
         self
     }
@@ -7441,17 +8113,18 @@ where
     ///
     /// Even though the property as already been set when instantiating this call,
     /// we provide this method for API completeness.
-    pub fn child_id(mut self, new_value: &str) -> ChildrenGetCall<'a, S> {
+    pub fn child_id(mut self, new_value: &str) -> ChildGetCall<'a, S> {
         self._child_id = new_value.to_string();
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
-    pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChildrenGetCall<'a, S> {
+    pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChildGetCall<'a, S> {
         self._delegate = Some(new_value);
         self
     }
@@ -7472,7 +8145,7 @@ where
     /// * *prettyPrint* (query-boolean) - Returns response with indentations and line breaks.
     /// * *quotaUser* (query-string) - An opaque string that represents a user for quota purposes. Must not exceed 40 characters.
     /// * *userIp* (query-string) - Deprecated. Please use quotaUser instead.
-    pub fn param<T>(mut self, name: T, value: T) -> ChildrenGetCall<'a, S>
+    pub fn param<T>(mut self, name: T, value: T) -> ChildGetCall<'a, S>
                                                         where T: AsRef<str> {
         self._additional_params.insert(name.as_ref().to_string(), value.as_ref().to_string());
         self
@@ -7480,25 +8153,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::MetadataReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::MetadataReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ChildrenGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ChildGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ChildGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ChildGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7506,8 +8190,8 @@ where
 
 /// Inserts a file into a folder.
 ///
-/// A builder for the *insert* method supported by a *children* resource.
-/// It is not used directly, but through a `ChildrenMethods` instance.
+/// A builder for the *insert* method supported by a *child* resource.
+/// It is not used directly, but through a [`ChildMethods`] instance.
 ///
 /// # Example
 ///
@@ -7520,7 +8204,7 @@ where
 /// use drive2::api::ChildReference;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7543,7 +8227,7 @@ where
 ///              .doit().await;
 /// # }
 /// ```
-pub struct ChildrenInsertCall<'a, S>
+pub struct ChildInsertCall<'a, S>
     where S: 'a {
 
     hub: &'a DriveHub<S>,
@@ -7554,14 +8238,14 @@ pub struct ChildrenInsertCall<'a, S>
     _enforce_single_parent: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
-impl<'a, S> client::CallBuilder for ChildrenInsertCall<'a, S> {}
+impl<'a, S> client::CallBuilder for ChildInsertCall<'a, S> {}
 
-impl<'a, S> ChildrenInsertCall<'a, S>
+impl<'a, S> ChildInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7572,67 +8256,52 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ChildReference)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.children.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("folderId", self._folder_id.to_string()));
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._enforce_single_parent {
-            params.push(("enforceSingleParent", value.to_string()));
-        }
+
         for &field in ["alt", "folderId", "supportsTeamDrives", "supportsAllDrives", "enforceSingleParent"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("folderId", self._folder_id);
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._enforce_single_parent.as_ref() {
+            params.push("enforceSingleParent", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{folderId}/children";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{folderId}", "folderId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["folderId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["folderId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -7646,14 +8315,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -7662,23 +8331,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -7694,7 +8369,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -7730,7 +8405,7 @@ where
     ///
     /// Even though the property as already been set when instantiating this call,
     /// we provide this method for API completeness.
-    pub fn request(mut self, new_value: ChildReference) -> ChildrenInsertCall<'a, S> {
+    pub fn request(mut self, new_value: ChildReference) -> ChildInsertCall<'a, S> {
         self._request = new_value;
         self
     }
@@ -7740,38 +8415,39 @@ where
     ///
     /// Even though the property as already been set when instantiating this call,
     /// we provide this method for API completeness.
-    pub fn folder_id(mut self, new_value: &str) -> ChildrenInsertCall<'a, S> {
+    pub fn folder_id(mut self, new_value: &str) -> ChildInsertCall<'a, S> {
         self._folder_id = new_value.to_string();
         self
     }
     /// Deprecated use supportsAllDrives instead.
     ///
     /// Sets the *supports team drives* query property to the given value.
-    pub fn supports_team_drives(mut self, new_value: bool) -> ChildrenInsertCall<'a, S> {
+    pub fn supports_team_drives(mut self, new_value: bool) -> ChildInsertCall<'a, S> {
         self._supports_team_drives = Some(new_value);
         self
     }
     /// Whether the requesting application supports both My Drives and shared drives.
     ///
     /// Sets the *supports all drives* query property to the given value.
-    pub fn supports_all_drives(mut self, new_value: bool) -> ChildrenInsertCall<'a, S> {
+    pub fn supports_all_drives(mut self, new_value: bool) -> ChildInsertCall<'a, S> {
         self._supports_all_drives = Some(new_value);
         self
     }
     /// Deprecated. Adding files to multiple folders is no longer supported. Use shortcuts instead.
     ///
     /// Sets the *enforce single parent* query property to the given value.
-    pub fn enforce_single_parent(mut self, new_value: bool) -> ChildrenInsertCall<'a, S> {
+    pub fn enforce_single_parent(mut self, new_value: bool) -> ChildInsertCall<'a, S> {
         self._enforce_single_parent = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
-    pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChildrenInsertCall<'a, S> {
+    pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChildInsertCall<'a, S> {
         self._delegate = Some(new_value);
         self
     }
@@ -7792,7 +8468,7 @@ where
     /// * *prettyPrint* (query-boolean) - Returns response with indentations and line breaks.
     /// * *quotaUser* (query-string) - An opaque string that represents a user for quota purposes. Must not exceed 40 characters.
     /// * *userIp* (query-string) - Deprecated. Please use quotaUser instead.
-    pub fn param<T>(mut self, name: T, value: T) -> ChildrenInsertCall<'a, S>
+    pub fn param<T>(mut self, name: T, value: T) -> ChildInsertCall<'a, S>
                                                         where T: AsRef<str> {
         self._additional_params.insert(name.as_ref().to_string(), value.as_ref().to_string());
         self
@@ -7800,25 +8476,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ChildrenInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ChildInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ChildInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ChildInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7826,8 +8513,8 @@ where
 
 /// Lists a folder's children.
 ///
-/// A builder for the *list* method supported by a *children* resource.
-/// It is not used directly, but through a `ChildrenMethods` instance.
+/// A builder for the *list* method supported by a *child* resource.
+/// It is not used directly, but through a [`ChildMethods`] instance.
 ///
 /// # Example
 ///
@@ -7839,7 +8526,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7858,7 +8545,7 @@ where
 ///              .doit().await;
 /// # }
 /// ```
-pub struct ChildrenListCall<'a, S>
+pub struct ChildListCall<'a, S>
     where S: 'a {
 
     hub: &'a DriveHub<S>,
@@ -7869,14 +8556,14 @@ pub struct ChildrenListCall<'a, S>
     _max_results: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
-impl<'a, S> client::CallBuilder for ChildrenListCall<'a, S> {}
+impl<'a, S> client::CallBuilder for ChildListCall<'a, S> {}
 
-impl<'a, S> ChildrenListCall<'a, S>
+impl<'a, S> ChildListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7887,80 +8574,65 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ChildList)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.children.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("folderId", self._folder_id.to_string()));
-        if let Some(value) = self._q {
-            params.push(("q", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._order_by {
-            params.push(("orderBy", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
+
         for &field in ["alt", "folderId", "q", "pageToken", "orderBy", "maxResults"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("folderId", self._folder_id);
+        if let Some(value) = self._q.as_ref() {
+            params.push("q", value);
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._order_by.as_ref() {
+            params.push("orderBy", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{folderId}/children";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{folderId}", "folderId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["folderId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["folderId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -7968,21 +8640,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -7998,7 +8676,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8035,45 +8713,46 @@ where
     ///
     /// Even though the property as already been set when instantiating this call,
     /// we provide this method for API completeness.
-    pub fn folder_id(mut self, new_value: &str) -> ChildrenListCall<'a, S> {
+    pub fn folder_id(mut self, new_value: &str) -> ChildListCall<'a, S> {
         self._folder_id = new_value.to_string();
         self
     }
     /// Query string for searching children.
     ///
     /// Sets the *q* query property to the given value.
-    pub fn q(mut self, new_value: &str) -> ChildrenListCall<'a, S> {
+    pub fn q(mut self, new_value: &str) -> ChildListCall<'a, S> {
         self._q = Some(new_value.to_string());
         self
     }
     /// Page token for children.
     ///
     /// Sets the *page token* query property to the given value.
-    pub fn page_token(mut self, new_value: &str) -> ChildrenListCall<'a, S> {
+    pub fn page_token(mut self, new_value: &str) -> ChildListCall<'a, S> {
         self._page_token = Some(new_value.to_string());
         self
     }
     /// A comma-separated list of sort keys. Valid keys are 'createdDate', 'folder', 'lastViewedByMeDate', 'modifiedByMeDate', 'modifiedDate', 'quotaBytesUsed', 'recency', 'sharedWithMeDate', 'starred', and 'title'. Each key sorts ascending by default, but may be reversed with the 'desc' modifier. Example usage: ?orderBy=folder,modifiedDate desc,title. Please note that there is a current limitation for users with approximately one million files in which the requested sort order is ignored.
     ///
     /// Sets the *order by* query property to the given value.
-    pub fn order_by(mut self, new_value: &str) -> ChildrenListCall<'a, S> {
+    pub fn order_by(mut self, new_value: &str) -> ChildListCall<'a, S> {
         self._order_by = Some(new_value.to_string());
         self
     }
     /// Maximum number of children to return.
     ///
     /// Sets the *max results* query property to the given value.
-    pub fn max_results(mut self, new_value: i32) -> ChildrenListCall<'a, S> {
+    pub fn max_results(mut self, new_value: i32) -> ChildListCall<'a, S> {
         self._max_results = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
-    pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChildrenListCall<'a, S> {
+    pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ChildListCall<'a, S> {
         self._delegate = Some(new_value);
         self
     }
@@ -8094,7 +8773,7 @@ where
     /// * *prettyPrint* (query-boolean) - Returns response with indentations and line breaks.
     /// * *quotaUser* (query-string) - An opaque string that represents a user for quota purposes. Must not exceed 40 characters.
     /// * *userIp* (query-string) - Deprecated. Please use quotaUser instead.
-    pub fn param<T>(mut self, name: T, value: T) -> ChildrenListCall<'a, S>
+    pub fn param<T>(mut self, name: T, value: T) -> ChildListCall<'a, S>
                                                         where T: AsRef<str> {
         self._additional_params.insert(name.as_ref().to_string(), value.as_ref().to_string());
         self
@@ -8102,25 +8781,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::MetadataReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::MetadataReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ChildrenListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ChildListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ChildListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ChildListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8129,7 +8819,7 @@ where
 /// Deletes a comment.
 ///
 /// A builder for the *delete* method supported by a *comment* resource.
-/// It is not used directly, but through a `CommentMethods` instance.
+/// It is not used directly, but through a [`CommentMethods`] instance.
 ///
 /// # Example
 ///
@@ -8141,7 +8831,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8164,14 +8854,14 @@ pub struct CommentDeleteCall<'a, S>
     _comment_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CommentDeleteCall<'a, S> {}
 
 impl<'a, S> CommentDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8182,68 +8872,53 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.comments.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("commentId", self._comment_id.to_string()));
+
         for &field in ["fileId", "commentId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("commentId", self._comment_id);
+
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "files/{fileId}/comments/{commentId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{commentId}", "commentId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["commentId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["commentId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8251,21 +8926,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8281,7 +8962,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8325,7 +9006,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CommentDeleteCall<'a, S> {
@@ -8357,25 +9039,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CommentDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CommentDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CommentDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CommentDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8384,7 +9077,7 @@ where
 /// Gets a comment by ID.
 ///
 /// A builder for the *get* method supported by a *comment* resource.
-/// It is not used directly, but through a `CommentMethods` instance.
+/// It is not used directly, but through a [`CommentMethods`] instance.
 ///
 /// # Example
 ///
@@ -8396,7 +9089,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8421,14 +9114,14 @@ pub struct CommentGetCall<'a, S>
     _include_deleted: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CommentGetCall<'a, S> {}
 
 impl<'a, S> CommentGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8439,72 +9132,57 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Comment)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.comments.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("commentId", self._comment_id.to_string()));
-        if let Some(value) = self._include_deleted {
-            params.push(("includeDeleted", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "commentId", "includeDeleted"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("commentId", self._comment_id);
+        if let Some(value) = self._include_deleted.as_ref() {
+            params.push("includeDeleted", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/comments/{commentId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Readonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Readonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{commentId}", "commentId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["commentId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["commentId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8512,21 +9190,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8542,7 +9226,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8603,7 +9287,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CommentGetCall<'a, S> {
@@ -8635,25 +9320,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Readonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Readonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CommentGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CommentGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CommentGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CommentGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8662,7 +9358,7 @@ where
 /// Creates a new comment on the given file.
 ///
 /// A builder for the *insert* method supported by a *comment* resource.
-/// It is not used directly, but through a `CommentMethods` instance.
+/// It is not used directly, but through a [`CommentMethods`] instance.
 ///
 /// # Example
 ///
@@ -8675,7 +9371,7 @@ where
 /// use drive2::api::Comment;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8703,14 +9399,14 @@ pub struct CommentInsertCall<'a, S>
     _file_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CommentInsertCall<'a, S> {}
 
 impl<'a, S> CommentInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8721,58 +9417,43 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Comment)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.comments.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
+
         for &field in ["alt", "fileId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("fileId", self._file_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/comments";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -8786,14 +9467,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8802,23 +9483,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8834,7 +9521,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8887,7 +9574,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CommentInsertCall<'a, S> {
@@ -8919,25 +9607,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CommentInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CommentInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CommentInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CommentInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8946,7 +9645,7 @@ where
 /// Lists a file's comments.
 ///
 /// A builder for the *list* method supported by a *comment* resource.
-/// It is not used directly, but through a `CommentMethods` instance.
+/// It is not used directly, but through a [`CommentMethods`] instance.
 ///
 /// # Example
 ///
@@ -8958,7 +9657,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8988,14 +9687,14 @@ pub struct CommentListCall<'a, S>
     _include_deleted: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CommentListCall<'a, S> {}
 
 impl<'a, S> CommentListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9006,80 +9705,65 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, CommentList)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.comments.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._updated_min {
-            params.push(("updatedMin", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
-        if let Some(value) = self._include_deleted {
-            params.push(("includeDeleted", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "updatedMin", "pageToken", "maxResults", "includeDeleted"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._updated_min.as_ref() {
+            params.push("updatedMin", value);
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
+        }
+        if let Some(value) = self._include_deleted.as_ref() {
+            params.push("includeDeleted", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/comments";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Readonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Readonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9087,21 +9771,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9117,7 +9807,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9189,7 +9879,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CommentListCall<'a, S> {
@@ -9221,25 +9912,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Readonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Readonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CommentListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CommentListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CommentListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CommentListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -9248,7 +9950,7 @@ where
 /// Updates an existing comment.
 ///
 /// A builder for the *patch* method supported by a *comment* resource.
-/// It is not used directly, but through a `CommentMethods` instance.
+/// It is not used directly, but through a [`CommentMethods`] instance.
 ///
 /// # Example
 ///
@@ -9261,7 +9963,7 @@ where
 /// use drive2::api::Comment;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -9290,14 +9992,14 @@ pub struct CommentPatchCall<'a, S>
     _comment_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CommentPatchCall<'a, S> {}
 
 impl<'a, S> CommentPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9308,59 +10010,44 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Comment)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.comments.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("commentId", self._comment_id.to_string()));
+
         for &field in ["alt", "fileId", "commentId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("commentId", self._comment_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/comments/{commentId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{commentId}", "commentId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["commentId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["commentId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -9374,14 +10061,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9390,23 +10077,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9422,7 +10115,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9485,7 +10178,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CommentPatchCall<'a, S> {
@@ -9517,25 +10211,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CommentPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CommentPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CommentPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CommentPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -9544,7 +10249,7 @@ where
 /// Updates an existing comment.
 ///
 /// A builder for the *update* method supported by a *comment* resource.
-/// It is not used directly, but through a `CommentMethods` instance.
+/// It is not used directly, but through a [`CommentMethods`] instance.
 ///
 /// # Example
 ///
@@ -9557,7 +10262,7 @@ where
 /// use drive2::api::Comment;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -9586,14 +10291,14 @@ pub struct CommentUpdateCall<'a, S>
     _comment_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CommentUpdateCall<'a, S> {}
 
 impl<'a, S> CommentUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9604,59 +10309,44 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Comment)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.comments.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("commentId", self._comment_id.to_string()));
+
         for &field in ["alt", "fileId", "commentId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("commentId", self._comment_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/comments/{commentId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{commentId}", "commentId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["commentId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["commentId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -9670,14 +10360,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9686,23 +10376,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9718,7 +10414,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9781,7 +10477,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CommentUpdateCall<'a, S> {
@@ -9813,25 +10510,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CommentUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CommentUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CommentUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CommentUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -9840,7 +10548,7 @@ where
 /// Permanently deletes a shared drive for which the user is an organizer. The shared drive cannot contain any untrashed items.
 ///
 /// A builder for the *delete* method supported by a *drive* resource.
-/// It is not used directly, but through a `DriveMethods` instance.
+/// It is not used directly, but through a [`DriveMethods`] instance.
 ///
 /// # Example
 ///
@@ -9852,7 +10560,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -9874,14 +10582,14 @@ pub struct DriveDeleteCall<'a, S>
     _drive_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for DriveDeleteCall<'a, S> {}
 
 impl<'a, S> DriveDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9892,67 +10600,52 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.drives.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(2 + self._additional_params.len());
-        params.push(("driveId", self._drive_id.to_string()));
+
         for &field in ["driveId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
+        let mut params = Params::with_capacity(2 + self._additional_params.len());
+        params.push("driveId", self._drive_id);
+
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "drives/{driveId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{driveId}", "driveId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["driveId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["driveId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9960,21 +10653,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9990,7 +10689,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -10024,7 +10723,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> DriveDeleteCall<'a, S> {
@@ -10056,25 +10756,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> DriveDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> DriveDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> DriveDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> DriveDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -10083,7 +10794,7 @@ where
 /// Gets a shared drive's metadata by ID.
 ///
 /// A builder for the *get* method supported by a *drive* resource.
-/// It is not used directly, but through a `DriveMethods` instance.
+/// It is not used directly, but through a [`DriveMethods`] instance.
 ///
 /// # Example
 ///
@@ -10095,7 +10806,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -10119,14 +10830,14 @@ pub struct DriveGetCall<'a, S>
     _use_domain_admin_access: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for DriveGetCall<'a, S> {}
 
 impl<'a, S> DriveGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -10137,71 +10848,56 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Drive)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.drives.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("driveId", self._drive_id.to_string()));
-        if let Some(value) = self._use_domain_admin_access {
-            params.push(("useDomainAdminAccess", value.to_string()));
-        }
+
         for &field in ["alt", "driveId", "useDomainAdminAccess"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("driveId", self._drive_id);
+        if let Some(value) = self._use_domain_admin_access.as_ref() {
+            params.push("useDomainAdminAccess", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "drives/{driveId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Readonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Readonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{driveId}", "driveId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["driveId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["driveId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -10209,21 +10905,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -10239,7 +10941,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -10290,7 +10992,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> DriveGetCall<'a, S> {
@@ -10322,25 +11025,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Readonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Readonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> DriveGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> DriveGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> DriveGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> DriveGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -10349,7 +11063,7 @@ where
 /// Hides a shared drive from the default view.
 ///
 /// A builder for the *hide* method supported by a *drive* resource.
-/// It is not used directly, but through a `DriveMethods` instance.
+/// It is not used directly, but through a [`DriveMethods`] instance.
 ///
 /// # Example
 ///
@@ -10361,7 +11075,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -10383,14 +11097,14 @@ pub struct DriveHideCall<'a, S>
     _drive_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for DriveHideCall<'a, S> {}
 
 impl<'a, S> DriveHideCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -10401,68 +11115,53 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Drive)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.drives.hide",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("driveId", self._drive_id.to_string()));
+
         for &field in ["alt", "driveId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("driveId", self._drive_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "drives/{driveId}/hide";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{driveId}", "driveId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["driveId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["driveId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -10470,21 +11169,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -10500,7 +11205,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -10544,7 +11249,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> DriveHideCall<'a, S> {
@@ -10576,25 +11282,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> DriveHideCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> DriveHideCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> DriveHideCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> DriveHideCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -10603,7 +11320,7 @@ where
 /// Creates a new shared drive.
 ///
 /// A builder for the *insert* method supported by a *drive* resource.
-/// It is not used directly, but through a `DriveMethods` instance.
+/// It is not used directly, but through a [`DriveMethods`] instance.
 ///
 /// # Example
 ///
@@ -10616,7 +11333,7 @@ where
 /// use drive2::api::Drive;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -10644,14 +11361,14 @@ pub struct DriveInsertCall<'a, S>
     _request_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for DriveInsertCall<'a, S> {}
 
 impl<'a, S> DriveInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -10662,37 +11379,36 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Drive)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.drives.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("requestId", self._request_id.to_string()));
+
         for &field in ["alt", "requestId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("requestId", self._request_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "drives";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -10706,14 +11422,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -10722,23 +11438,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -10754,7 +11476,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -10807,7 +11529,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> DriveInsertCall<'a, S> {
@@ -10839,25 +11562,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> DriveInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> DriveInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> DriveInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> DriveInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -10866,7 +11600,7 @@ where
 /// Lists the user's shared drives.
 ///
 /// A builder for the *list* method supported by a *drive* resource.
-/// It is not used directly, but through a `DriveMethods` instance.
+/// It is not used directly, but through a [`DriveMethods`] instance.
 ///
 /// # Example
 ///
@@ -10878,7 +11612,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -10907,14 +11641,14 @@ pub struct DriveListCall<'a, S>
     _max_results: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for DriveListCall<'a, S> {}
 
 impl<'a, S> DriveListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -10925,58 +11659,57 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, DriveList)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.drives.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        if let Some(value) = self._use_domain_admin_access {
-            params.push(("useDomainAdminAccess", value.to_string()));
-        }
-        if let Some(value) = self._q {
-            params.push(("q", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
+
         for &field in ["alt", "useDomainAdminAccess", "q", "pageToken", "maxResults"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        if let Some(value) = self._use_domain_admin_access.as_ref() {
+            params.push("useDomainAdminAccess", value.to_string());
+        }
+        if let Some(value) = self._q.as_ref() {
+            params.push("q", value);
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "drives";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Readonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Readonly.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -10984,21 +11717,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -11014,7 +11753,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -11076,7 +11815,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> DriveListCall<'a, S> {
@@ -11108,25 +11848,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Readonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Readonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> DriveListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> DriveListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> DriveListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> DriveListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -11135,7 +11886,7 @@ where
 /// Restores a shared drive to the default view.
 ///
 /// A builder for the *unhide* method supported by a *drive* resource.
-/// It is not used directly, but through a `DriveMethods` instance.
+/// It is not used directly, but through a [`DriveMethods`] instance.
 ///
 /// # Example
 ///
@@ -11147,7 +11898,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -11169,14 +11920,14 @@ pub struct DriveUnhideCall<'a, S>
     _drive_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for DriveUnhideCall<'a, S> {}
 
 impl<'a, S> DriveUnhideCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -11187,68 +11938,53 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Drive)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.drives.unhide",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("driveId", self._drive_id.to_string()));
+
         for &field in ["alt", "driveId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("driveId", self._drive_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "drives/{driveId}/unhide";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{driveId}", "driveId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["driveId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["driveId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -11256,21 +11992,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -11286,7 +12028,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -11330,7 +12072,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> DriveUnhideCall<'a, S> {
@@ -11362,25 +12105,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> DriveUnhideCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> DriveUnhideCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> DriveUnhideCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> DriveUnhideCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -11389,7 +12143,7 @@ where
 /// Updates the metadata for a shared drive.
 ///
 /// A builder for the *update* method supported by a *drive* resource.
-/// It is not used directly, but through a `DriveMethods` instance.
+/// It is not used directly, but through a [`DriveMethods`] instance.
 ///
 /// # Example
 ///
@@ -11402,7 +12156,7 @@ where
 /// use drive2::api::Drive;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -11432,14 +12186,14 @@ pub struct DriveUpdateCall<'a, S>
     _use_domain_admin_access: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for DriveUpdateCall<'a, S> {}
 
 impl<'a, S> DriveUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -11450,61 +12204,46 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Drive)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.drives.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("driveId", self._drive_id.to_string()));
-        if let Some(value) = self._use_domain_admin_access {
-            params.push(("useDomainAdminAccess", value.to_string()));
-        }
+
         for &field in ["alt", "driveId", "useDomainAdminAccess"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("driveId", self._drive_id);
+        if let Some(value) = self._use_domain_admin_access.as_ref() {
+            params.push("useDomainAdminAccess", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "drives/{driveId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{driveId}", "driveId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["driveId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["driveId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -11518,14 +12257,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -11534,23 +12273,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -11566,7 +12311,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -11626,7 +12371,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> DriveUpdateCall<'a, S> {
@@ -11658,25 +12404,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> DriveUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> DriveUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> DriveUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> DriveUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -11685,7 +12442,7 @@ where
 /// Creates a copy of the specified file. Folders cannot be copied.
 ///
 /// A builder for the *copy* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -11698,7 +12455,7 @@ where
 /// use drive2::api::File;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -11748,14 +12505,14 @@ pub struct FileCopyCall<'a, S>
     _convert: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FileCopyCall<'a, S> {}
 
 impl<'a, S> FileCopyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -11766,91 +12523,76 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, File)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.copy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(15 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._visibility {
-            params.push(("visibility", value.to_string()));
-        }
-        if let Some(value) = self._timed_text_track_name {
-            params.push(("timedTextTrackName", value.to_string()));
-        }
-        if let Some(value) = self._timed_text_language {
-            params.push(("timedTextLanguage", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._pinned {
-            params.push(("pinned", value.to_string()));
-        }
-        if let Some(value) = self._ocr_language {
-            params.push(("ocrLanguage", value.to_string()));
-        }
-        if let Some(value) = self._ocr {
-            params.push(("ocr", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
-        if let Some(value) = self._enforce_single_parent {
-            params.push(("enforceSingleParent", value.to_string()));
-        }
-        if let Some(value) = self._convert {
-            params.push(("convert", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "visibility", "timedTextTrackName", "timedTextLanguage", "supportsTeamDrives", "supportsAllDrives", "pinned", "ocrLanguage", "ocr", "includePermissionsForView", "enforceSingleParent", "convert"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(15 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._visibility.as_ref() {
+            params.push("visibility", value);
+        }
+        if let Some(value) = self._timed_text_track_name.as_ref() {
+            params.push("timedTextTrackName", value);
+        }
+        if let Some(value) = self._timed_text_language.as_ref() {
+            params.push("timedTextLanguage", value);
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._pinned.as_ref() {
+            params.push("pinned", value.to_string());
+        }
+        if let Some(value) = self._ocr_language.as_ref() {
+            params.push("ocrLanguage", value);
+        }
+        if let Some(value) = self._ocr.as_ref() {
+            params.push("ocr", value.to_string());
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
+        }
+        if let Some(value) = self._enforce_single_parent.as_ref() {
+            params.push("enforceSingleParent", value.to_string());
+        }
+        if let Some(value) = self._convert.as_ref() {
+            params.push("convert", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/copy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -11864,14 +12606,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -11880,23 +12622,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -11912,7 +12660,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -12042,7 +12790,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FileCopyCall<'a, S> {
@@ -12074,25 +12823,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FileCopyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FileCopyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FileCopyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FileCopyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -12101,7 +12861,7 @@ where
 /// Permanently deletes a file by ID. Skips the trash. The currently authenticated user must own the file or be an organizer on the parent for shared drive files.
 ///
 /// A builder for the *delete* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -12113,7 +12873,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -12141,14 +12901,14 @@ pub struct FileDeleteCall<'a, S>
     _enforce_single_parent: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FileDeleteCall<'a, S> {}
 
 impl<'a, S> FileDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -12159,76 +12919,61 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._enforce_single_parent {
-            params.push(("enforceSingleParent", value.to_string()));
-        }
+
         for &field in ["fileId", "supportsTeamDrives", "supportsAllDrives", "enforceSingleParent"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._enforce_single_parent.as_ref() {
+            params.push("enforceSingleParent", value.to_string());
         }
 
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "files/{fileId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -12236,21 +12981,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -12266,7 +13017,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -12321,7 +13072,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FileDeleteCall<'a, S> {
@@ -12353,25 +13105,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FileDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FileDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FileDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FileDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -12380,7 +13143,7 @@ where
 /// Permanently deletes all of the user's trashed files.
 ///
 /// A builder for the *emptyTrash* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -12392,7 +13155,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -12415,14 +13178,14 @@ pub struct FileEmptyTrashCall<'a, S>
     _enforce_single_parent: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FileEmptyTrashCall<'a, S> {}
 
 impl<'a, S> FileEmptyTrashCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -12433,48 +13196,47 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.emptyTrash",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(2 + self._additional_params.len());
-        if let Some(value) = self._enforce_single_parent {
-            params.push(("enforceSingleParent", value.to_string()));
-        }
+
         for &field in ["enforceSingleParent"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(2 + self._additional_params.len());
+        if let Some(value) = self._enforce_single_parent.as_ref() {
+            params.push("enforceSingleParent", value.to_string());
         }
 
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "files/trash";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -12482,21 +13244,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -12512,7 +13280,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -12543,7 +13311,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FileEmptyTrashCall<'a, S> {
@@ -12575,25 +13344,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FileEmptyTrashCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FileEmptyTrashCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FileEmptyTrashCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FileEmptyTrashCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -12605,7 +13385,7 @@ where
 /// `.param("alt", "media")`.
 ///
 /// A builder for the *export* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -12617,7 +13397,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -12640,14 +13420,14 @@ pub struct FileExportCall<'a, S>
     _mime_type: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FileExportCall<'a, S> {}
 
 impl<'a, S> FileExportCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -12658,68 +13438,53 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.export",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("mimeType", self._mime_type.to_string()));
+
         for &field in ["fileId", "mimeType"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("mimeType", self._mime_type);
+
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "files/{fileId}/export";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Readonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Readonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -12727,21 +13492,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -12757,7 +13528,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -12801,7 +13572,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FileExportCall<'a, S> {
@@ -12833,25 +13605,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Readonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Readonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FileExportCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FileExportCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FileExportCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FileExportCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -12860,7 +13643,7 @@ where
 /// Generates a set of file IDs which can be provided in insert or copy requests.
 ///
 /// A builder for the *generateIds* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -12872,7 +13655,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -12899,14 +13682,14 @@ pub struct FileGenerateIdCall<'a, S>
     _max_results: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FileGenerateIdCall<'a, S> {}
 
 impl<'a, S> FileGenerateIdCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -12917,55 +13700,54 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GeneratedIds)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.generateIds",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        if let Some(value) = self._type_ {
-            params.push(("type", value.to_string()));
-        }
-        if let Some(value) = self._space {
-            params.push(("space", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
+
         for &field in ["alt", "type", "space", "maxResults"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        if let Some(value) = self._type_.as_ref() {
+            params.push("type", value);
+        }
+        if let Some(value) = self._space.as_ref() {
+            params.push("space", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/generateIds";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -12973,21 +13755,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -13003,7 +13791,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -13058,7 +13846,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FileGenerateIdCall<'a, S> {
@@ -13090,25 +13879,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FileGenerateIdCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FileGenerateIdCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FileGenerateIdCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FileGenerateIdCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -13122,7 +13922,7 @@ where
 /// but not the `File` structure that you would usually get. The latter will be a default value.
 ///
 /// A builder for the *get* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -13134,7 +13934,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -13170,14 +13970,14 @@ pub struct FileGetCall<'a, S>
     _acknowledge_abuse: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FileGetCall<'a, S> {}
 
 impl<'a, S> FileGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -13188,105 +13988,83 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, File)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(9 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._update_viewed_date {
-            params.push(("updateViewedDate", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._revision_id {
-            params.push(("revisionId", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
-        if let Some(value) = self._acknowledge_abuse {
-            params.push(("acknowledgeAbuse", value.to_string()));
-        }
+
         for &field in ["fileId", "updateViewedDate", "supportsTeamDrives", "supportsAllDrives", "revisionId", "projection", "includePermissionsForView", "acknowledgeAbuse"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(9 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._update_viewed_date.as_ref() {
+            params.push("updateViewedDate", value.to_string());
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._revision_id.as_ref() {
+            params.push("revisionId", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
+        }
+        if let Some(value) = self._acknowledge_abuse.as_ref() {
+            params.push("acknowledgeAbuse", value.to_string());
         }
 
-        let (json_field_missing, enable_resource_parsing) = {
-            let mut enable = true;
-            let mut field_present = true;
-            for &(name, ref value) in params.iter() {
-                if name == "alt" {
-                    field_present = false;
-                    if <String as AsRef<str>>::as_ref(&value) != "json" {
-                        enable = false;
-                    }
-                    break;
-                }
+        params.extend(self._additional_params.iter());
+
+        let (alt_field_missing, enable_resource_parsing) = {
+            if let Some(value) = params.get("alt") {
+                (false, value == "json")
+            } else {
+                (true, true)
             }
-            (field_present, enable)
         };
-        if json_field_missing {
-            params.push(("alt", "json".to_string()));
+        if alt_field_missing {
+            params.push("alt", "json");
         }
-
         let mut url = self.hub._base_url.clone() + "files/{fileId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -13294,21 +14072,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -13324,7 +14108,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -13417,7 +14201,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FileGetCall<'a, S> {
@@ -13449,25 +14234,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::MetadataReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::MetadataReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FileGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FileGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FileGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FileGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -13476,7 +14272,7 @@ where
 /// Insert a new file.
 ///
 /// A builder for the *insert* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -13490,7 +14286,7 @@ where
 /// use std::fs;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -13541,14 +14337,14 @@ pub struct FileInsertCall<'a, S>
     _convert: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FileInsertCall<'a, S> {}
 
 impl<'a, S> FileInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -13556,84 +14352,83 @@ where
 
 
     /// Perform the operation you have build so far.
-    async fn doit<RS>(mut self, mut reader: RS, reader_mime_type: mime::Mime, protocol: &'static str) -> client::Result<(hyper::Response<hyper::body::Body>, File)>
+    async fn doit<RS>(mut self, mut reader: RS, reader_mime_type: mime::Mime, protocol: client::UploadProtocol) -> client::Result<(hyper::Response<hyper::body::Body>, File)>
 		where RS: client::ReadSeek {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(15 + self._additional_params.len());
-        if let Some(value) = self._visibility {
-            params.push(("visibility", value.to_string()));
-        }
-        if let Some(value) = self._use_content_as_indexable_text {
-            params.push(("useContentAsIndexableText", value.to_string()));
-        }
-        if let Some(value) = self._timed_text_track_name {
-            params.push(("timedTextTrackName", value.to_string()));
-        }
-        if let Some(value) = self._timed_text_language {
-            params.push(("timedTextLanguage", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._pinned {
-            params.push(("pinned", value.to_string()));
-        }
-        if let Some(value) = self._ocr_language {
-            params.push(("ocrLanguage", value.to_string()));
-        }
-        if let Some(value) = self._ocr {
-            params.push(("ocr", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
-        if let Some(value) = self._enforce_single_parent {
-            params.push(("enforceSingleParent", value.to_string()));
-        }
-        if let Some(value) = self._convert {
-            params.push(("convert", value.to_string()));
-        }
+
         for &field in ["alt", "visibility", "useContentAsIndexableText", "timedTextTrackName", "timedTextLanguage", "supportsTeamDrives", "supportsAllDrives", "pinned", "ocrLanguage", "ocr", "includePermissionsForView", "enforceSingleParent", "convert"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(15 + self._additional_params.len());
+        if let Some(value) = self._visibility.as_ref() {
+            params.push("visibility", value);
+        }
+        if let Some(value) = self._use_content_as_indexable_text.as_ref() {
+            params.push("useContentAsIndexableText", value.to_string());
+        }
+        if let Some(value) = self._timed_text_track_name.as_ref() {
+            params.push("timedTextTrackName", value);
+        }
+        if let Some(value) = self._timed_text_language.as_ref() {
+            params.push("timedTextLanguage", value);
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._pinned.as_ref() {
+            params.push("pinned", value.to_string());
+        }
+        if let Some(value) = self._ocr_language.as_ref() {
+            params.push("ocrLanguage", value);
+        }
+        if let Some(value) = self._ocr.as_ref() {
+            params.push("ocr", value.to_string());
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
+        }
+        if let Some(value) = self._enforce_single_parent.as_ref() {
+            params.push("enforceSingleParent", value.to_string());
+        }
+        if let Some(value) = self._convert.as_ref() {
+            params.push("convert", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let (mut url, upload_type) =
-            if protocol == "resumable" {
+            if protocol == client::UploadProtocol::Resumable {
                 (self.hub._root_url.clone() + "resumable/upload/drive/v2/files", "resumable")
-            } else if protocol == "simple" {
+            } else if protocol == client::UploadProtocol::Simple {
                 (self.hub._root_url.clone() + "upload/drive/v2/files", "multipart")
             } else {
                 unreachable!()
             };
-        params.push(("uploadType", upload_type.to_string()));
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        params.push("uploadType", upload_type);
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -13650,14 +14445,14 @@ where
         let mut upload_url: Option<String> = None;
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -13675,7 +14470,7 @@ where
                 } else {
                     let mut mp_reader: client::MultiPartReader = Default::default();
                     let (mut body_reader, content_type) = match protocol {
-                        "simple" => {
+                        client::UploadProtocol::Simple => {
                             mp_reader.reserve_exact(2);
                             let size = reader.seek(io::SeekFrom::End(0)).unwrap();
                         reader.seek(io::SeekFrom::Start(0)).unwrap();
@@ -13684,36 +14479,41 @@ where
                         }
                             mp_reader.add_part(&mut request_value_reader, request_size, json_mime_type.clone())
                                      .add_part(&mut reader, size, reader_mime_type.clone());
-                            let mime_type = mp_reader.mime_type();
-                            (&mut mp_reader as &mut (dyn io::Read + Send), (CONTENT_TYPE, mime_type.to_string()))
+                            (&mut mp_reader as &mut (dyn io::Read + Send), client::MultiPartReader::mime_type())
                         },
-                        _ => (&mut request_value_reader as &mut (dyn io::Read + Send), (CONTENT_TYPE, json_mime_type.to_string())),
+                        _ => (&mut request_value_reader as &mut (dyn io::Read + Send), json_mime_type.clone()),
                     };
                     let client = &self.hub.client;
                     dlg.pre_request();
-                    let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                            .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                    let mut req_builder = hyper::Request::builder()
+                        .method(hyper::Method::POST)
+                        .uri(url.as_str())
+                        .header(USER_AGENT, self.hub._user_agent.clone());
+    
+                    if let Some(token) = token.as_ref() {
+                        req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                    }
     
                     upload_url_from_server = true;
-                    if protocol == "resumable" {
+                    if protocol == client::UploadProtocol::Resumable {
                         req_builder = req_builder.header("X-Upload-Content-Type", format!("{}", reader_mime_type));
                     }
     
                             let mut body_reader_bytes = vec![];
                             body_reader.read_to_end(&mut body_reader_bytes).unwrap();
                             let request = req_builder
-                            .header(content_type.0, content_type.1.to_string())
-                            .body(hyper::body::Body::from(body_reader_bytes));
+                                .header(CONTENT_TYPE, content_type.to_string())
+                                .body(hyper::body::Body::from(body_reader_bytes));
     
                     client.request(request.unwrap()).await
-                    
+    
                 }
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -13729,7 +14529,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -13740,7 +14540,7 @@ where
                             None => Err(client::Error::Failure(restored_response)),
                         }
                     }
-                    if protocol == "resumable" {
+                    if protocol == client::UploadProtocol::Resumable {
                         let size = reader.seek(io::SeekFrom::End(0)).unwrap();
                         reader.seek(io::SeekFrom::Start(0)).unwrap();
                         if size > 5497558138880 {
@@ -13758,7 +14558,8 @@ where
                                 start_at: if upload_url_from_server { Some(0) } else { None },
                                 auth: &self.hub.auth,
                                 user_agent: &self.hub._user_agent,
-                                auth_header: format!("Bearer {}", token.as_str()),
+                                // TODO: Check this assumption
+                                auth_header: format!("Bearer {}", token.ok_or_else(|| client::Error::MissingToken("resumable upload requires token".into()))?.as_str()),
                                 url: url_str,
                                 reader: &mut reader,
                                 media_type: reader_mime_type.clone(),
@@ -13817,7 +14618,7 @@ where
     /// * *valid mime types*: '*/*'
     pub async fn upload_resumable<RS>(self, resumeable_stream: RS, mime_type: mime::Mime) -> client::Result<(hyper::Response<hyper::body::Body>, File)>
                 where RS: client::ReadSeek {
-        self.doit(resumeable_stream, mime_type, "resumable").await
+        self.doit(resumeable_stream, mime_type, client::UploadProtocol::Resumable).await
     }
     /// Upload media all at once.
     /// If the upload fails for whichever reason, all progress is lost.
@@ -13827,7 +14628,7 @@ where
     /// * *valid mime types*: '*/*'
     pub async fn upload<RS>(self, stream: RS, mime_type: mime::Mime) -> client::Result<(hyper::Response<hyper::body::Body>, File)>
                 where RS: client::ReadSeek {
-        self.doit(stream, mime_type, "simple").await
+        self.doit(stream, mime_type, client::UploadProtocol::Simple).await
     }
 
     ///
@@ -13926,7 +14727,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FileInsertCall<'a, S> {
@@ -13958,25 +14760,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FileInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FileInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FileInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FileInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -13985,7 +14798,7 @@ where
 /// Lists the user's files.
 ///
 /// A builder for the *list* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -13997,7 +14810,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -14048,14 +14861,14 @@ pub struct FileListCall<'a, S>
     _corpora: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FileListCall<'a, S> {}
 
 impl<'a, S> FileListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -14066,91 +14879,90 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, FileList)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(17 + self._additional_params.len());
-        if let Some(value) = self._team_drive_id {
-            params.push(("teamDriveId", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._spaces {
-            params.push(("spaces", value.to_string()));
-        }
-        if let Some(value) = self._q {
-            params.push(("q", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._order_by {
-            params.push(("orderBy", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
-        if let Some(value) = self._include_team_drive_items {
-            params.push(("includeTeamDriveItems", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
-        if let Some(value) = self._include_items_from_all_drives {
-            params.push(("includeItemsFromAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._drive_id {
-            params.push(("driveId", value.to_string()));
-        }
-        if let Some(value) = self._corpus {
-            params.push(("corpus", value.to_string()));
-        }
-        if let Some(value) = self._corpora {
-            params.push(("corpora", value.to_string()));
-        }
+
         for &field in ["alt", "teamDriveId", "supportsTeamDrives", "supportsAllDrives", "spaces", "q", "projection", "pageToken", "orderBy", "maxResults", "includeTeamDriveItems", "includePermissionsForView", "includeItemsFromAllDrives", "driveId", "corpus", "corpora"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(17 + self._additional_params.len());
+        if let Some(value) = self._team_drive_id.as_ref() {
+            params.push("teamDriveId", value);
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._spaces.as_ref() {
+            params.push("spaces", value);
+        }
+        if let Some(value) = self._q.as_ref() {
+            params.push("q", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._order_by.as_ref() {
+            params.push("orderBy", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
+        }
+        if let Some(value) = self._include_team_drive_items.as_ref() {
+            params.push("includeTeamDriveItems", value.to_string());
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
+        }
+        if let Some(value) = self._include_items_from_all_drives.as_ref() {
+            params.push("includeItemsFromAllDrives", value.to_string());
+        }
+        if let Some(value) = self._drive_id.as_ref() {
+            params.push("driveId", value);
+        }
+        if let Some(value) = self._corpus.as_ref() {
+            params.push("corpus", value);
+        }
+        if let Some(value) = self._corpora.as_ref() {
+            params.push("corpora", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::AppReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::AppReadonly.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -14158,21 +14970,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -14188,7 +15006,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -14327,7 +15145,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FileListCall<'a, S> {
@@ -14359,25 +15178,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::AppReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::AppReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FileListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FileListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FileListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FileListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -14386,7 +15216,7 @@ where
 /// Updates a file's metadata and/or content. When calling this method, only populate fields in the request that you want to modify. When updating fields, some fields might change automatically, such as modifiedDate. This method supports patch semantics.
 ///
 /// A builder for the *patch* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -14399,7 +15229,7 @@ where
 /// use drive2::api::File;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -14461,14 +15291,14 @@ pub struct FilePatchCall<'a, S>
     _add_parents: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FilePatchCall<'a, S> {}
 
 impl<'a, S> FilePatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -14479,109 +15309,94 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, File)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(21 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._use_content_as_indexable_text {
-            params.push(("useContentAsIndexableText", value.to_string()));
-        }
-        if let Some(value) = self._update_viewed_date {
-            params.push(("updateViewedDate", value.to_string()));
-        }
-        if let Some(value) = self._timed_text_track_name {
-            params.push(("timedTextTrackName", value.to_string()));
-        }
-        if let Some(value) = self._timed_text_language {
-            params.push(("timedTextLanguage", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._set_modified_date {
-            params.push(("setModifiedDate", value.to_string()));
-        }
-        if let Some(value) = self._remove_parents {
-            params.push(("removeParents", value.to_string()));
-        }
-        if let Some(value) = self._pinned {
-            params.push(("pinned", value.to_string()));
-        }
-        if let Some(value) = self._ocr_language {
-            params.push(("ocrLanguage", value.to_string()));
-        }
-        if let Some(value) = self._ocr {
-            params.push(("ocr", value.to_string()));
-        }
-        if let Some(value) = self._new_revision {
-            params.push(("newRevision", value.to_string()));
-        }
-        if let Some(value) = self._modified_date_behavior {
-            params.push(("modifiedDateBehavior", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
-        if let Some(value) = self._enforce_single_parent {
-            params.push(("enforceSingleParent", value.to_string()));
-        }
-        if let Some(value) = self._convert {
-            params.push(("convert", value.to_string()));
-        }
-        if let Some(value) = self._add_parents {
-            params.push(("addParents", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "useContentAsIndexableText", "updateViewedDate", "timedTextTrackName", "timedTextLanguage", "supportsTeamDrives", "supportsAllDrives", "setModifiedDate", "removeParents", "pinned", "ocrLanguage", "ocr", "newRevision", "modifiedDateBehavior", "includePermissionsForView", "enforceSingleParent", "convert", "addParents"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(21 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._use_content_as_indexable_text.as_ref() {
+            params.push("useContentAsIndexableText", value.to_string());
+        }
+        if let Some(value) = self._update_viewed_date.as_ref() {
+            params.push("updateViewedDate", value.to_string());
+        }
+        if let Some(value) = self._timed_text_track_name.as_ref() {
+            params.push("timedTextTrackName", value);
+        }
+        if let Some(value) = self._timed_text_language.as_ref() {
+            params.push("timedTextLanguage", value);
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._set_modified_date.as_ref() {
+            params.push("setModifiedDate", value.to_string());
+        }
+        if let Some(value) = self._remove_parents.as_ref() {
+            params.push("removeParents", value);
+        }
+        if let Some(value) = self._pinned.as_ref() {
+            params.push("pinned", value.to_string());
+        }
+        if let Some(value) = self._ocr_language.as_ref() {
+            params.push("ocrLanguage", value);
+        }
+        if let Some(value) = self._ocr.as_ref() {
+            params.push("ocr", value.to_string());
+        }
+        if let Some(value) = self._new_revision.as_ref() {
+            params.push("newRevision", value.to_string());
+        }
+        if let Some(value) = self._modified_date_behavior.as_ref() {
+            params.push("modifiedDateBehavior", value);
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
+        }
+        if let Some(value) = self._enforce_single_parent.as_ref() {
+            params.push("enforceSingleParent", value.to_string());
+        }
+        if let Some(value) = self._convert.as_ref() {
+            params.push("convert", value.to_string());
+        }
+        if let Some(value) = self._add_parents.as_ref() {
+            params.push("addParents", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -14595,14 +15410,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -14611,23 +15426,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -14643,7 +15464,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -14815,7 +15636,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FilePatchCall<'a, S> {
@@ -14847,25 +15669,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FilePatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FilePatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FilePatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FilePatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -14874,7 +15707,7 @@ where
 /// Set the file's updated time to the current server time.
 ///
 /// A builder for the *touch* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -14886,7 +15719,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -14914,14 +15747,14 @@ pub struct FileTouchCall<'a, S>
     _include_permissions_for_view: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FileTouchCall<'a, S> {}
 
 impl<'a, S> FileTouchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -14932,77 +15765,62 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, File)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.touch",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "supportsTeamDrives", "supportsAllDrives", "includePermissionsForView"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/touch";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -15010,21 +15828,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -15040,7 +15864,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -15105,7 +15929,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FileTouchCall<'a, S> {
@@ -15137,25 +15962,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FileTouchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FileTouchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FileTouchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FileTouchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -15164,7 +16000,7 @@ where
 /// Moves a file to the trash. The currently authenticated user must own the file or be at least a fileOrganizer on the parent for shared drive files. Only the owner may trash a file. The trashed item is excluded from all files.list responses returned for any user who does not own the file. However, all users with access to the file can see the trashed item metadata in an API response. All users with access can copy, download, export, and share the file.
 ///
 /// A builder for the *trash* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -15176,7 +16012,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -15204,14 +16040,14 @@ pub struct FileTrashCall<'a, S>
     _include_permissions_for_view: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FileTrashCall<'a, S> {}
 
 impl<'a, S> FileTrashCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -15222,77 +16058,62 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, File)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.trash",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "supportsTeamDrives", "supportsAllDrives", "includePermissionsForView"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/trash";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -15300,21 +16121,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -15330,7 +16157,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -15395,7 +16222,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FileTrashCall<'a, S> {
@@ -15427,25 +16255,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FileTrashCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FileTrashCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FileTrashCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FileTrashCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -15454,7 +16293,7 @@ where
 /// Restores a file from the trash. The currently authenticated user must own the file or be at least a fileOrganizer on the parent for shared drive files. Only the owner may untrash a file.
 ///
 /// A builder for the *untrash* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -15466,7 +16305,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -15494,14 +16333,14 @@ pub struct FileUntrashCall<'a, S>
     _include_permissions_for_view: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FileUntrashCall<'a, S> {}
 
 impl<'a, S> FileUntrashCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -15512,77 +16351,62 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, File)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.untrash",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "supportsTeamDrives", "supportsAllDrives", "includePermissionsForView"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/untrash";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -15590,21 +16414,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -15620,7 +16450,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -15685,7 +16515,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FileUntrashCall<'a, S> {
@@ -15717,25 +16548,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FileUntrashCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FileUntrashCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FileUntrashCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FileUntrashCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -15744,7 +16586,7 @@ where
 /// Updates a file's metadata and/or content. When calling this method, only populate fields in the request that you want to modify. When updating fields, some fields might be changed automatically, such as modifiedDate. This method supports patch semantics.
 ///
 /// A builder for the *update* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -15758,7 +16600,7 @@ where
 /// use std::fs;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -15820,14 +16662,14 @@ pub struct FileUpdateCall<'a, S>
     _add_parents: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FileUpdateCall<'a, S> {}
 
 impl<'a, S> FileUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -15837,109 +16679,94 @@ where
     pub async fn doit_without_upload(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, File)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(21 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._use_content_as_indexable_text {
-            params.push(("useContentAsIndexableText", value.to_string()));
-        }
-        if let Some(value) = self._update_viewed_date {
-            params.push(("updateViewedDate", value.to_string()));
-        }
-        if let Some(value) = self._timed_text_track_name {
-            params.push(("timedTextTrackName", value.to_string()));
-        }
-        if let Some(value) = self._timed_text_language {
-            params.push(("timedTextLanguage", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._set_modified_date {
-            params.push(("setModifiedDate", value.to_string()));
-        }
-        if let Some(value) = self._remove_parents {
-            params.push(("removeParents", value.to_string()));
-        }
-        if let Some(value) = self._pinned {
-            params.push(("pinned", value.to_string()));
-        }
-        if let Some(value) = self._ocr_language {
-            params.push(("ocrLanguage", value.to_string()));
-        }
-        if let Some(value) = self._ocr {
-            params.push(("ocr", value.to_string()));
-        }
-        if let Some(value) = self._new_revision {
-            params.push(("newRevision", value.to_string()));
-        }
-        if let Some(value) = self._modified_date_behavior {
-            params.push(("modifiedDateBehavior", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
-        if let Some(value) = self._enforce_single_parent {
-            params.push(("enforceSingleParent", value.to_string()));
-        }
-        if let Some(value) = self._convert {
-            params.push(("convert", value.to_string()));
-        }
-        if let Some(value) = self._add_parents {
-            params.push(("addParents", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "useContentAsIndexableText", "updateViewedDate", "timedTextTrackName", "timedTextLanguage", "supportsTeamDrives", "supportsAllDrives", "setModifiedDate", "removeParents", "pinned", "ocrLanguage", "ocr", "newRevision", "modifiedDateBehavior", "includePermissionsForView", "enforceSingleParent", "convert", "addParents"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(21 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._use_content_as_indexable_text.as_ref() {
+            params.push("useContentAsIndexableText", value.to_string());
+        }
+        if let Some(value) = self._update_viewed_date.as_ref() {
+            params.push("updateViewedDate", value.to_string());
+        }
+        if let Some(value) = self._timed_text_track_name.as_ref() {
+            params.push("timedTextTrackName", value);
+        }
+        if let Some(value) = self._timed_text_language.as_ref() {
+            params.push("timedTextLanguage", value);
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._set_modified_date.as_ref() {
+            params.push("setModifiedDate", value.to_string());
+        }
+        if let Some(value) = self._remove_parents.as_ref() {
+            params.push("removeParents", value);
+        }
+        if let Some(value) = self._pinned.as_ref() {
+            params.push("pinned", value.to_string());
+        }
+        if let Some(value) = self._ocr_language.as_ref() {
+            params.push("ocrLanguage", value);
+        }
+        if let Some(value) = self._ocr.as_ref() {
+            params.push("ocr", value.to_string());
+        }
+        if let Some(value) = self._new_revision.as_ref() {
+            params.push("newRevision", value.to_string());
+        }
+        if let Some(value) = self._modified_date_behavior.as_ref() {
+            params.push("modifiedDateBehavior", value);
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
+        }
+        if let Some(value) = self._enforce_single_parent.as_ref() {
+            params.push("enforceSingleParent", value.to_string());
+        }
+        if let Some(value) = self._convert.as_ref() {
+            params.push("convert", value.to_string());
+        }
+        if let Some(value) = self._add_parents.as_ref() {
+            params.push("addParents", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -15953,14 +16780,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -15969,23 +16796,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -16001,7 +16834,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -16034,121 +16867,106 @@ where
 
 
     /// Perform the operation you have build so far.
-    async fn doit<RS>(mut self, mut reader: RS, reader_mime_type: mime::Mime, protocol: &'static str) -> client::Result<(hyper::Response<hyper::body::Body>, File)>
+    async fn doit<RS>(mut self, mut reader: RS, reader_mime_type: mime::Mime, protocol: client::UploadProtocol) -> client::Result<(hyper::Response<hyper::body::Body>, File)>
 		where RS: client::ReadSeek {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(21 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._use_content_as_indexable_text {
-            params.push(("useContentAsIndexableText", value.to_string()));
-        }
-        if let Some(value) = self._update_viewed_date {
-            params.push(("updateViewedDate", value.to_string()));
-        }
-        if let Some(value) = self._timed_text_track_name {
-            params.push(("timedTextTrackName", value.to_string()));
-        }
-        if let Some(value) = self._timed_text_language {
-            params.push(("timedTextLanguage", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._set_modified_date {
-            params.push(("setModifiedDate", value.to_string()));
-        }
-        if let Some(value) = self._remove_parents {
-            params.push(("removeParents", value.to_string()));
-        }
-        if let Some(value) = self._pinned {
-            params.push(("pinned", value.to_string()));
-        }
-        if let Some(value) = self._ocr_language {
-            params.push(("ocrLanguage", value.to_string()));
-        }
-        if let Some(value) = self._ocr {
-            params.push(("ocr", value.to_string()));
-        }
-        if let Some(value) = self._new_revision {
-            params.push(("newRevision", value.to_string()));
-        }
-        if let Some(value) = self._modified_date_behavior {
-            params.push(("modifiedDateBehavior", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
-        if let Some(value) = self._enforce_single_parent {
-            params.push(("enforceSingleParent", value.to_string()));
-        }
-        if let Some(value) = self._convert {
-            params.push(("convert", value.to_string()));
-        }
-        if let Some(value) = self._add_parents {
-            params.push(("addParents", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "useContentAsIndexableText", "updateViewedDate", "timedTextTrackName", "timedTextLanguage", "supportsTeamDrives", "supportsAllDrives", "setModifiedDate", "removeParents", "pinned", "ocrLanguage", "ocr", "newRevision", "modifiedDateBehavior", "includePermissionsForView", "enforceSingleParent", "convert", "addParents"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(21 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._use_content_as_indexable_text.as_ref() {
+            params.push("useContentAsIndexableText", value.to_string());
+        }
+        if let Some(value) = self._update_viewed_date.as_ref() {
+            params.push("updateViewedDate", value.to_string());
+        }
+        if let Some(value) = self._timed_text_track_name.as_ref() {
+            params.push("timedTextTrackName", value);
+        }
+        if let Some(value) = self._timed_text_language.as_ref() {
+            params.push("timedTextLanguage", value);
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._set_modified_date.as_ref() {
+            params.push("setModifiedDate", value.to_string());
+        }
+        if let Some(value) = self._remove_parents.as_ref() {
+            params.push("removeParents", value);
+        }
+        if let Some(value) = self._pinned.as_ref() {
+            params.push("pinned", value.to_string());
+        }
+        if let Some(value) = self._ocr_language.as_ref() {
+            params.push("ocrLanguage", value);
+        }
+        if let Some(value) = self._ocr.as_ref() {
+            params.push("ocr", value.to_string());
+        }
+        if let Some(value) = self._new_revision.as_ref() {
+            params.push("newRevision", value.to_string());
+        }
+        if let Some(value) = self._modified_date_behavior.as_ref() {
+            params.push("modifiedDateBehavior", value);
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
+        }
+        if let Some(value) = self._enforce_single_parent.as_ref() {
+            params.push("enforceSingleParent", value.to_string());
+        }
+        if let Some(value) = self._convert.as_ref() {
+            params.push("convert", value.to_string());
+        }
+        if let Some(value) = self._add_parents.as_ref() {
+            params.push("addParents", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let (mut url, upload_type) =
-            if protocol == "resumable" {
+            if protocol == client::UploadProtocol::Resumable {
                 (self.hub._root_url.clone() + "resumable/upload/drive/v2/files/{fileId}", "resumable")
-            } else if protocol == "simple" {
+            } else if protocol == client::UploadProtocol::Simple {
                 (self.hub._root_url.clone() + "upload/drive/v2/files/{fileId}", "multipart")
             } else {
                 unreachable!()
             };
-        params.push(("uploadType", upload_type.to_string()));
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        params.push("uploadType", upload_type);
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -16165,14 +16983,14 @@ where
         let mut upload_url: Option<String> = None;
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -16190,7 +17008,7 @@ where
                 } else {
                     let mut mp_reader: client::MultiPartReader = Default::default();
                     let (mut body_reader, content_type) = match protocol {
-                        "simple" => {
+                        client::UploadProtocol::Simple => {
                             mp_reader.reserve_exact(2);
                             let size = reader.seek(io::SeekFrom::End(0)).unwrap();
                         reader.seek(io::SeekFrom::Start(0)).unwrap();
@@ -16199,36 +17017,41 @@ where
                         }
                             mp_reader.add_part(&mut request_value_reader, request_size, json_mime_type.clone())
                                      .add_part(&mut reader, size, reader_mime_type.clone());
-                            let mime_type = mp_reader.mime_type();
-                            (&mut mp_reader as &mut (dyn io::Read + Send), (CONTENT_TYPE, mime_type.to_string()))
+                            (&mut mp_reader as &mut (dyn io::Read + Send), client::MultiPartReader::mime_type())
                         },
-                        _ => (&mut request_value_reader as &mut (dyn io::Read + Send), (CONTENT_TYPE, json_mime_type.to_string())),
+                        _ => (&mut request_value_reader as &mut (dyn io::Read + Send), json_mime_type.clone()),
                     };
                     let client = &self.hub.client;
                     dlg.pre_request();
-                    let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                            .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                    let mut req_builder = hyper::Request::builder()
+                        .method(hyper::Method::PUT)
+                        .uri(url.as_str())
+                        .header(USER_AGENT, self.hub._user_agent.clone());
+    
+                    if let Some(token) = token.as_ref() {
+                        req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                    }
     
                     upload_url_from_server = true;
-                    if protocol == "resumable" {
+                    if protocol == client::UploadProtocol::Resumable {
                         req_builder = req_builder.header("X-Upload-Content-Type", format!("{}", reader_mime_type));
                     }
     
                             let mut body_reader_bytes = vec![];
                             body_reader.read_to_end(&mut body_reader_bytes).unwrap();
                             let request = req_builder
-                            .header(content_type.0, content_type.1.to_string())
-                            .body(hyper::body::Body::from(body_reader_bytes));
+                                .header(CONTENT_TYPE, content_type.to_string())
+                                .body(hyper::body::Body::from(body_reader_bytes));
     
                     client.request(request.unwrap()).await
-                    
+    
                 }
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -16244,7 +17067,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -16255,7 +17078,7 @@ where
                             None => Err(client::Error::Failure(restored_response)),
                         }
                     }
-                    if protocol == "resumable" {
+                    if protocol == client::UploadProtocol::Resumable {
                         let size = reader.seek(io::SeekFrom::End(0)).unwrap();
                         reader.seek(io::SeekFrom::Start(0)).unwrap();
                         if size > 5497558138880 {
@@ -16273,7 +17096,8 @@ where
                                 start_at: if upload_url_from_server { Some(0) } else { None },
                                 auth: &self.hub.auth,
                                 user_agent: &self.hub._user_agent,
-                                auth_header: format!("Bearer {}", token.as_str()),
+                                // TODO: Check this assumption
+                                auth_header: format!("Bearer {}", token.ok_or_else(|| client::Error::MissingToken("resumable upload requires token".into()))?.as_str()),
                                 url: url_str,
                                 reader: &mut reader,
                                 media_type: reader_mime_type.clone(),
@@ -16332,7 +17156,7 @@ where
     /// * *valid mime types*: '*/*'
     pub async fn upload_resumable<RS>(self, resumeable_stream: RS, mime_type: mime::Mime) -> client::Result<(hyper::Response<hyper::body::Body>, File)>
                 where RS: client::ReadSeek {
-        self.doit(resumeable_stream, mime_type, "resumable").await
+        self.doit(resumeable_stream, mime_type, client::UploadProtocol::Resumable).await
     }
     /// Upload media all at once.
     /// If the upload fails for whichever reason, all progress is lost.
@@ -16342,7 +17166,7 @@ where
     /// * *valid mime types*: '*/*'
     pub async fn upload<RS>(self, stream: RS, mime_type: mime::Mime) -> client::Result<(hyper::Response<hyper::body::Body>, File)>
                 where RS: client::ReadSeek {
-        self.doit(stream, mime_type, "simple").await
+        self.doit(stream, mime_type, client::UploadProtocol::Simple).await
     }
 
     ///
@@ -16486,7 +17310,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FileUpdateCall<'a, S> {
@@ -16518,25 +17343,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FileUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FileUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FileUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FileUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -16550,7 +17386,7 @@ where
 /// but not the `Channel` structure that you would usually get. The latter will be a default value.
 ///
 /// A builder for the *watch* method supported by a *file* resource.
-/// It is not used directly, but through a `FileMethods` instance.
+/// It is not used directly, but through a [`FileMethods`] instance.
 ///
 /// # Example
 ///
@@ -16563,7 +17399,7 @@ where
 /// use drive2::api::Channel;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -16605,14 +17441,14 @@ pub struct FileWatchCall<'a, S>
     _acknowledge_abuse: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for FileWatchCall<'a, S> {}
 
 impl<'a, S> FileWatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -16623,95 +17459,73 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Channel)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.files.watch",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(10 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._update_viewed_date {
-            params.push(("updateViewedDate", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._revision_id {
-            params.push(("revisionId", value.to_string()));
-        }
-        if let Some(value) = self._projection {
-            params.push(("projection", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
-        if let Some(value) = self._acknowledge_abuse {
-            params.push(("acknowledgeAbuse", value.to_string()));
-        }
+
         for &field in ["fileId", "updateViewedDate", "supportsTeamDrives", "supportsAllDrives", "revisionId", "projection", "includePermissionsForView", "acknowledgeAbuse"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(10 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._update_viewed_date.as_ref() {
+            params.push("updateViewedDate", value.to_string());
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._revision_id.as_ref() {
+            params.push("revisionId", value);
+        }
+        if let Some(value) = self._projection.as_ref() {
+            params.push("projection", value);
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
+        }
+        if let Some(value) = self._acknowledge_abuse.as_ref() {
+            params.push("acknowledgeAbuse", value.to_string());
         }
 
-        let (json_field_missing, enable_resource_parsing) = {
-            let mut enable = true;
-            let mut field_present = true;
-            for &(name, ref value) in params.iter() {
-                if name == "alt" {
-                    field_present = false;
-                    if <String as AsRef<str>>::as_ref(&value) != "json" {
-                        enable = false;
-                    }
-                    break;
-                }
+        params.extend(self._additional_params.iter());
+
+        let (alt_field_missing, enable_resource_parsing) = {
+            if let Some(value) = params.get("alt") {
+                (false, value == "json")
+            } else {
+                (true, true)
             }
-            (field_present, enable)
         };
-        if json_field_missing {
-            params.push(("alt", "json".to_string()));
+        if alt_field_missing {
+            params.push("alt", "json");
         }
-
         let mut url = self.hub._base_url.clone() + "files/{fileId}/watch";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -16725,14 +17539,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -16741,23 +17555,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -16773,7 +17593,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -16875,7 +17695,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> FileWatchCall<'a, S> {
@@ -16907,25 +17728,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> FileWatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> FileWatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> FileWatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> FileWatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -16934,7 +17766,7 @@ where
 /// Removes a parent from a file.
 ///
 /// A builder for the *delete* method supported by a *parent* resource.
-/// It is not used directly, but through a `ParentMethods` instance.
+/// It is not used directly, but through a [`ParentMethods`] instance.
 ///
 /// # Example
 ///
@@ -16946,7 +17778,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -16971,14 +17803,14 @@ pub struct ParentDeleteCall<'a, S>
     _enforce_single_parent: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ParentDeleteCall<'a, S> {}
 
 impl<'a, S> ParentDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -16989,71 +17821,56 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.parents.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("parentId", self._parent_id.to_string()));
-        if let Some(value) = self._enforce_single_parent {
-            params.push(("enforceSingleParent", value.to_string()));
-        }
+
         for &field in ["fileId", "parentId", "enforceSingleParent"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("parentId", self._parent_id);
+        if let Some(value) = self._enforce_single_parent.as_ref() {
+            params.push("enforceSingleParent", value.to_string());
         }
 
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "files/{fileId}/parents/{parentId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{parentId}", "parentId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["parentId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parentId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -17061,21 +17878,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -17091,7 +17914,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -17142,7 +17965,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ParentDeleteCall<'a, S> {
@@ -17174,25 +17998,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ParentDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ParentDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ParentDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ParentDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -17201,7 +18036,7 @@ where
 /// Gets a specific parent reference.
 ///
 /// A builder for the *get* method supported by a *parent* resource.
-/// It is not used directly, but through a `ParentMethods` instance.
+/// It is not used directly, but through a [`ParentMethods`] instance.
 ///
 /// # Example
 ///
@@ -17213,7 +18048,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -17236,14 +18071,14 @@ pub struct ParentGetCall<'a, S>
     _parent_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ParentGetCall<'a, S> {}
 
 impl<'a, S> ParentGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -17254,69 +18089,54 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ParentReference)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.parents.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("parentId", self._parent_id.to_string()));
+
         for &field in ["alt", "fileId", "parentId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("parentId", self._parent_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/parents/{parentId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{parentId}", "parentId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["parentId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parentId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -17324,21 +18144,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -17354,7 +18180,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -17408,7 +18234,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ParentGetCall<'a, S> {
@@ -17440,25 +18267,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::MetadataReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::MetadataReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ParentGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ParentGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ParentGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ParentGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -17467,7 +18305,7 @@ where
 /// Adds a parent folder for a file.
 ///
 /// A builder for the *insert* method supported by a *parent* resource.
-/// It is not used directly, but through a `ParentMethods` instance.
+/// It is not used directly, but through a [`ParentMethods`] instance.
 ///
 /// # Example
 ///
@@ -17480,7 +18318,7 @@ where
 /// use drive2::api::ParentReference;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -17514,14 +18352,14 @@ pub struct ParentInsertCall<'a, S>
     _enforce_single_parent: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ParentInsertCall<'a, S> {}
 
 impl<'a, S> ParentInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -17532,67 +18370,52 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ParentReference)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.parents.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._enforce_single_parent {
-            params.push(("enforceSingleParent", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "supportsTeamDrives", "supportsAllDrives", "enforceSingleParent"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._enforce_single_parent.as_ref() {
+            params.push("enforceSingleParent", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/parents";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -17606,14 +18429,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -17622,23 +18445,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -17654,7 +18483,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -17728,7 +18557,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ParentInsertCall<'a, S> {
@@ -17760,25 +18590,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ParentInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ParentInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ParentInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ParentInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -17787,7 +18628,7 @@ where
 /// Lists a file's parents.
 ///
 /// A builder for the *list* method supported by a *parent* resource.
-/// It is not used directly, but through a `ParentMethods` instance.
+/// It is not used directly, but through a [`ParentMethods`] instance.
 ///
 /// # Example
 ///
@@ -17799,7 +18640,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -17821,14 +18662,14 @@ pub struct ParentListCall<'a, S>
     _file_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ParentListCall<'a, S> {}
 
 impl<'a, S> ParentListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -17839,68 +18680,53 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, ParentList)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.parents.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
+
         for &field in ["alt", "fileId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("fileId", self._file_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/parents";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -17908,21 +18734,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -17938,7 +18770,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -17982,7 +18814,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ParentListCall<'a, S> {
@@ -18014,25 +18847,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::MetadataReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::MetadataReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ParentListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ParentListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ParentListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ParentListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -18041,7 +18885,7 @@ where
 /// Deletes a permission from a file or shared drive.
 ///
 /// A builder for the *delete* method supported by a *permission* resource.
-/// It is not used directly, but through a `PermissionMethods` instance.
+/// It is not used directly, but through a [`PermissionMethods`] instance.
 ///
 /// # Example
 ///
@@ -18053,7 +18897,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -18082,14 +18926,14 @@ pub struct PermissionDeleteCall<'a, S>
     _supports_all_drives: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for PermissionDeleteCall<'a, S> {}
 
 impl<'a, S> PermissionDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -18100,77 +18944,62 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.permissions.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("permissionId", self._permission_id.to_string()));
-        if let Some(value) = self._use_domain_admin_access {
-            params.push(("useDomainAdminAccess", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
+
         for &field in ["fileId", "permissionId", "useDomainAdminAccess", "supportsTeamDrives", "supportsAllDrives"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("permissionId", self._permission_id);
+        if let Some(value) = self._use_domain_admin_access.as_ref() {
+            params.push("useDomainAdminAccess", value.to_string());
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
         }
 
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "files/{fileId}/permissions/{permissionId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{permissionId}", "permissionId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["permissionId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["permissionId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -18178,21 +19007,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -18208,7 +19043,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -18273,7 +19108,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> PermissionDeleteCall<'a, S> {
@@ -18305,25 +19141,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> PermissionDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> PermissionDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> PermissionDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> PermissionDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -18332,7 +19179,7 @@ where
 /// Gets a permission by ID.
 ///
 /// A builder for the *get* method supported by a *permission* resource.
-/// It is not used directly, but through a `PermissionMethods` instance.
+/// It is not used directly, but through a [`PermissionMethods`] instance.
 ///
 /// # Example
 ///
@@ -18344,7 +19191,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -18373,14 +19220,14 @@ pub struct PermissionGetCall<'a, S>
     _supports_all_drives: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for PermissionGetCall<'a, S> {}
 
 impl<'a, S> PermissionGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -18391,78 +19238,63 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Permission)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.permissions.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("permissionId", self._permission_id.to_string()));
-        if let Some(value) = self._use_domain_admin_access {
-            params.push(("useDomainAdminAccess", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "permissionId", "useDomainAdminAccess", "supportsTeamDrives", "supportsAllDrives"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("permissionId", self._permission_id);
+        if let Some(value) = self._use_domain_admin_access.as_ref() {
+            params.push("useDomainAdminAccess", value.to_string());
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/permissions/{permissionId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{permissionId}", "permissionId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["permissionId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["permissionId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -18470,21 +19302,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -18500,7 +19338,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -18575,7 +19413,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> PermissionGetCall<'a, S> {
@@ -18607,25 +19446,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::MetadataReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::MetadataReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> PermissionGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> PermissionGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> PermissionGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> PermissionGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -18634,7 +19484,7 @@ where
 /// Returns the permission ID for an email address.
 ///
 /// A builder for the *getIdForEmail* method supported by a *permission* resource.
-/// It is not used directly, but through a `PermissionMethods` instance.
+/// It is not used directly, but through a [`PermissionMethods`] instance.
 ///
 /// # Example
 ///
@@ -18646,7 +19496,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -18668,14 +19518,14 @@ pub struct PermissionGetIdForEmailCall<'a, S>
     _email: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for PermissionGetIdForEmailCall<'a, S> {}
 
 impl<'a, S> PermissionGetIdForEmailCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -18686,68 +19536,53 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, PermissionId)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.permissions.getIdForEmail",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("email", self._email.to_string()));
+
         for &field in ["alt", "email"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("email", self._email);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "permissionIds/{email}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::AppReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::AppReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{email}", "email")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["email"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["email"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -18755,21 +19590,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -18785,7 +19626,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -18829,7 +19670,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> PermissionGetIdForEmailCall<'a, S> {
@@ -18861,25 +19703,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::AppReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::AppReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> PermissionGetIdForEmailCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> PermissionGetIdForEmailCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> PermissionGetIdForEmailCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> PermissionGetIdForEmailCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -18888,7 +19741,7 @@ where
 /// Inserts a permission for a file or shared drive.
 ///
 /// A builder for the *insert* method supported by a *permission* resource.
-/// It is not used directly, but through a `PermissionMethods` instance.
+/// It is not used directly, but through a [`PermissionMethods`] instance.
 ///
 /// # Example
 ///
@@ -18901,7 +19754,7 @@ where
 /// use drive2::api::Permission;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -18943,14 +19796,14 @@ pub struct PermissionInsertCall<'a, S>
     _email_message: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for PermissionInsertCall<'a, S> {}
 
 impl<'a, S> PermissionInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -18961,79 +19814,64 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Permission)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.permissions.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(11 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._use_domain_admin_access {
-            params.push(("useDomainAdminAccess", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._send_notification_emails {
-            params.push(("sendNotificationEmails", value.to_string()));
-        }
-        if let Some(value) = self._move_to_new_owners_root {
-            params.push(("moveToNewOwnersRoot", value.to_string()));
-        }
-        if let Some(value) = self._enforce_single_parent {
-            params.push(("enforceSingleParent", value.to_string()));
-        }
-        if let Some(value) = self._email_message {
-            params.push(("emailMessage", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "useDomainAdminAccess", "supportsTeamDrives", "supportsAllDrives", "sendNotificationEmails", "moveToNewOwnersRoot", "enforceSingleParent", "emailMessage"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(11 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._use_domain_admin_access.as_ref() {
+            params.push("useDomainAdminAccess", value.to_string());
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._send_notification_emails.as_ref() {
+            params.push("sendNotificationEmails", value.to_string());
+        }
+        if let Some(value) = self._move_to_new_owners_root.as_ref() {
+            params.push("moveToNewOwnersRoot", value.to_string());
+        }
+        if let Some(value) = self._enforce_single_parent.as_ref() {
+            params.push("enforceSingleParent", value.to_string());
+        }
+        if let Some(value) = self._email_message.as_ref() {
+            params.push("emailMessage", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/permissions";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -19047,14 +19885,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -19063,23 +19901,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -19095,7 +19939,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -19197,7 +20041,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> PermissionInsertCall<'a, S> {
@@ -19229,25 +20074,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> PermissionInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> PermissionInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> PermissionInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> PermissionInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -19256,7 +20112,7 @@ where
 /// Lists a file's or shared drive's permissions.
 ///
 /// A builder for the *list* method supported by a *permission* resource.
-/// It is not used directly, but through a `PermissionMethods` instance.
+/// It is not used directly, but through a [`PermissionMethods`] instance.
 ///
 /// # Example
 ///
@@ -19268,7 +20124,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -19302,14 +20158,14 @@ pub struct PermissionListCall<'a, S>
     _include_permissions_for_view: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for PermissionListCall<'a, S> {}
 
 impl<'a, S> PermissionListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -19320,86 +20176,71 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, PermissionList)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.permissions.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(9 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._use_domain_admin_access {
-            params.push(("useDomainAdminAccess", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
-        if let Some(value) = self._include_permissions_for_view {
-            params.push(("includePermissionsForView", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "useDomainAdminAccess", "supportsTeamDrives", "supportsAllDrives", "pageToken", "maxResults", "includePermissionsForView"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(9 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._use_domain_admin_access.as_ref() {
+            params.push("useDomainAdminAccess", value.to_string());
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
+        }
+        if let Some(value) = self._include_permissions_for_view.as_ref() {
+            params.push("includePermissionsForView", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/permissions";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -19407,21 +20248,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -19437,7 +20284,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -19523,7 +20370,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> PermissionListCall<'a, S> {
@@ -19555,25 +20403,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::MetadataReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::MetadataReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> PermissionListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> PermissionListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> PermissionListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> PermissionListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -19582,7 +20441,7 @@ where
 /// Updates a permission using patch semantics.
 ///
 /// A builder for the *patch* method supported by a *permission* resource.
-/// It is not used directly, but through a `PermissionMethods` instance.
+/// It is not used directly, but through a [`PermissionMethods`] instance.
 ///
 /// # Example
 ///
@@ -19595,7 +20454,7 @@ where
 /// use drive2::api::Permission;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -19634,14 +20493,14 @@ pub struct PermissionPatchCall<'a, S>
     _remove_expiration: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for PermissionPatchCall<'a, S> {}
 
 impl<'a, S> PermissionPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -19652,74 +20511,59 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Permission)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.permissions.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(10 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("permissionId", self._permission_id.to_string()));
-        if let Some(value) = self._use_domain_admin_access {
-            params.push(("useDomainAdminAccess", value.to_string()));
-        }
-        if let Some(value) = self._transfer_ownership {
-            params.push(("transferOwnership", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._remove_expiration {
-            params.push(("removeExpiration", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "permissionId", "useDomainAdminAccess", "transferOwnership", "supportsTeamDrives", "supportsAllDrives", "removeExpiration"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(10 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("permissionId", self._permission_id);
+        if let Some(value) = self._use_domain_admin_access.as_ref() {
+            params.push("useDomainAdminAccess", value.to_string());
+        }
+        if let Some(value) = self._transfer_ownership.as_ref() {
+            params.push("transferOwnership", value.to_string());
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._remove_expiration.as_ref() {
+            params.push("removeExpiration", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/permissions/{permissionId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{permissionId}", "permissionId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["permissionId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["permissionId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -19733,14 +20577,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -19749,23 +20593,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -19781,7 +20631,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -19879,7 +20729,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> PermissionPatchCall<'a, S> {
@@ -19911,25 +20762,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> PermissionPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> PermissionPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> PermissionPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> PermissionPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -19938,7 +20800,7 @@ where
 /// Updates a permission.
 ///
 /// A builder for the *update* method supported by a *permission* resource.
-/// It is not used directly, but through a `PermissionMethods` instance.
+/// It is not used directly, but through a [`PermissionMethods`] instance.
 ///
 /// # Example
 ///
@@ -19951,7 +20813,7 @@ where
 /// use drive2::api::Permission;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -19990,14 +20852,14 @@ pub struct PermissionUpdateCall<'a, S>
     _remove_expiration: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for PermissionUpdateCall<'a, S> {}
 
 impl<'a, S> PermissionUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -20008,74 +20870,59 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Permission)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.permissions.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(10 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("permissionId", self._permission_id.to_string()));
-        if let Some(value) = self._use_domain_admin_access {
-            params.push(("useDomainAdminAccess", value.to_string()));
-        }
-        if let Some(value) = self._transfer_ownership {
-            params.push(("transferOwnership", value.to_string()));
-        }
-        if let Some(value) = self._supports_team_drives {
-            params.push(("supportsTeamDrives", value.to_string()));
-        }
-        if let Some(value) = self._supports_all_drives {
-            params.push(("supportsAllDrives", value.to_string()));
-        }
-        if let Some(value) = self._remove_expiration {
-            params.push(("removeExpiration", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "permissionId", "useDomainAdminAccess", "transferOwnership", "supportsTeamDrives", "supportsAllDrives", "removeExpiration"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(10 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("permissionId", self._permission_id);
+        if let Some(value) = self._use_domain_admin_access.as_ref() {
+            params.push("useDomainAdminAccess", value.to_string());
+        }
+        if let Some(value) = self._transfer_ownership.as_ref() {
+            params.push("transferOwnership", value.to_string());
+        }
+        if let Some(value) = self._supports_team_drives.as_ref() {
+            params.push("supportsTeamDrives", value.to_string());
+        }
+        if let Some(value) = self._supports_all_drives.as_ref() {
+            params.push("supportsAllDrives", value.to_string());
+        }
+        if let Some(value) = self._remove_expiration.as_ref() {
+            params.push("removeExpiration", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/permissions/{permissionId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{permissionId}", "permissionId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["permissionId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["permissionId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -20089,14 +20936,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -20105,23 +20952,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -20137,7 +20990,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -20235,7 +21088,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> PermissionUpdateCall<'a, S> {
@@ -20267,25 +21121,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> PermissionUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> PermissionUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> PermissionUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> PermissionUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -20294,7 +21159,7 @@ where
 /// Deletes a property.
 ///
 /// A builder for the *delete* method supported by a *property* resource.
-/// It is not used directly, but through a `PropertyMethods` instance.
+/// It is not used directly, but through a [`PropertyMethods`] instance.
 ///
 /// # Example
 ///
@@ -20306,7 +21171,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -20331,14 +21196,14 @@ pub struct PropertyDeleteCall<'a, S>
     _visibility: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for PropertyDeleteCall<'a, S> {}
 
 impl<'a, S> PropertyDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -20349,71 +21214,56 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.properties.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("propertyKey", self._property_key.to_string()));
-        if let Some(value) = self._visibility {
-            params.push(("visibility", value.to_string()));
-        }
+
         for &field in ["fileId", "propertyKey", "visibility"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("propertyKey", self._property_key);
+        if let Some(value) = self._visibility.as_ref() {
+            params.push("visibility", value);
         }
 
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "files/{fileId}/properties/{propertyKey}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{propertyKey}", "propertyKey")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["propertyKey", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["propertyKey", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -20421,21 +21271,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -20451,7 +21307,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -20502,7 +21358,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> PropertyDeleteCall<'a, S> {
@@ -20534,25 +21391,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> PropertyDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> PropertyDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> PropertyDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> PropertyDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -20561,7 +21429,7 @@ where
 /// Gets a property by its key.
 ///
 /// A builder for the *get* method supported by a *property* resource.
-/// It is not used directly, but through a `PropertyMethods` instance.
+/// It is not used directly, but through a [`PropertyMethods`] instance.
 ///
 /// # Example
 ///
@@ -20573,7 +21441,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -20598,14 +21466,14 @@ pub struct PropertyGetCall<'a, S>
     _visibility: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for PropertyGetCall<'a, S> {}
 
 impl<'a, S> PropertyGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -20616,72 +21484,57 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Property)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.properties.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("propertyKey", self._property_key.to_string()));
-        if let Some(value) = self._visibility {
-            params.push(("visibility", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "propertyKey", "visibility"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("propertyKey", self._property_key);
+        if let Some(value) = self._visibility.as_ref() {
+            params.push("visibility", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/properties/{propertyKey}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{propertyKey}", "propertyKey")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["propertyKey", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["propertyKey", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -20689,21 +21542,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -20719,7 +21578,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -20780,7 +21639,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> PropertyGetCall<'a, S> {
@@ -20812,25 +21672,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::MetadataReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::MetadataReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> PropertyGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> PropertyGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> PropertyGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> PropertyGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -20839,7 +21710,7 @@ where
 /// Adds a property to a file, or updates it if it already exists.
 ///
 /// A builder for the *insert* method supported by a *property* resource.
-/// It is not used directly, but through a `PropertyMethods` instance.
+/// It is not used directly, but through a [`PropertyMethods`] instance.
 ///
 /// # Example
 ///
@@ -20852,7 +21723,7 @@ where
 /// use drive2::api::Property;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -20880,14 +21751,14 @@ pub struct PropertyInsertCall<'a, S>
     _file_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for PropertyInsertCall<'a, S> {}
 
 impl<'a, S> PropertyInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -20898,58 +21769,43 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Property)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.properties.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
+
         for &field in ["alt", "fileId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("fileId", self._file_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/properties";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -20963,14 +21819,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -20979,23 +21835,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -21011,7 +21873,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -21064,7 +21926,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> PropertyInsertCall<'a, S> {
@@ -21096,25 +21959,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> PropertyInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> PropertyInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> PropertyInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> PropertyInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -21123,7 +21997,7 @@ where
 /// Lists a file's properties.
 ///
 /// A builder for the *list* method supported by a *property* resource.
-/// It is not used directly, but through a `PropertyMethods` instance.
+/// It is not used directly, but through a [`PropertyMethods`] instance.
 ///
 /// # Example
 ///
@@ -21135,7 +22009,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -21157,14 +22031,14 @@ pub struct PropertyListCall<'a, S>
     _file_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for PropertyListCall<'a, S> {}
 
 impl<'a, S> PropertyListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -21175,68 +22049,53 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, PropertyList)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.properties.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
+
         for &field in ["alt", "fileId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("fileId", self._file_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/properties";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -21244,21 +22103,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -21274,7 +22139,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -21318,7 +22183,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> PropertyListCall<'a, S> {
@@ -21350,25 +22216,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::MetadataReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::MetadataReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> PropertyListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> PropertyListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> PropertyListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> PropertyListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -21377,7 +22254,7 @@ where
 /// Updates a property.
 ///
 /// A builder for the *patch* method supported by a *property* resource.
-/// It is not used directly, but through a `PropertyMethods` instance.
+/// It is not used directly, but through a [`PropertyMethods`] instance.
 ///
 /// # Example
 ///
@@ -21390,7 +22267,7 @@ where
 /// use drive2::api::Property;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -21421,14 +22298,14 @@ pub struct PropertyPatchCall<'a, S>
     _visibility: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for PropertyPatchCall<'a, S> {}
 
 impl<'a, S> PropertyPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -21439,62 +22316,47 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Property)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.properties.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("propertyKey", self._property_key.to_string()));
-        if let Some(value) = self._visibility {
-            params.push(("visibility", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "propertyKey", "visibility"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("propertyKey", self._property_key);
+        if let Some(value) = self._visibility.as_ref() {
+            params.push("visibility", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/properties/{propertyKey}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{propertyKey}", "propertyKey")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["propertyKey", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["propertyKey", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -21508,14 +22370,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -21524,23 +22386,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -21556,7 +22424,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -21626,7 +22494,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> PropertyPatchCall<'a, S> {
@@ -21658,25 +22527,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> PropertyPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> PropertyPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> PropertyPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> PropertyPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -21685,7 +22565,7 @@ where
 /// Updates a property.
 ///
 /// A builder for the *update* method supported by a *property* resource.
-/// It is not used directly, but through a `PropertyMethods` instance.
+/// It is not used directly, but through a [`PropertyMethods`] instance.
 ///
 /// # Example
 ///
@@ -21698,7 +22578,7 @@ where
 /// use drive2::api::Property;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -21729,14 +22609,14 @@ pub struct PropertyUpdateCall<'a, S>
     _visibility: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for PropertyUpdateCall<'a, S> {}
 
 impl<'a, S> PropertyUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -21747,62 +22627,47 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Property)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.properties.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("propertyKey", self._property_key.to_string()));
-        if let Some(value) = self._visibility {
-            params.push(("visibility", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "propertyKey", "visibility"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("propertyKey", self._property_key);
+        if let Some(value) = self._visibility.as_ref() {
+            params.push("visibility", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/properties/{propertyKey}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{propertyKey}", "propertyKey")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["propertyKey", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["propertyKey", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -21816,14 +22681,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -21832,23 +22697,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -21864,7 +22735,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -21934,7 +22805,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> PropertyUpdateCall<'a, S> {
@@ -21966,25 +22838,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> PropertyUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> PropertyUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> PropertyUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> PropertyUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -21993,7 +22876,7 @@ where
 /// Deletes a reply.
 ///
 /// A builder for the *delete* method supported by a *reply* resource.
-/// It is not used directly, but through a `ReplyMethods` instance.
+/// It is not used directly, but through a [`ReplyMethods`] instance.
 ///
 /// # Example
 ///
@@ -22005,7 +22888,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -22029,14 +22912,14 @@ pub struct ReplyDeleteCall<'a, S>
     _reply_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ReplyDeleteCall<'a, S> {}
 
 impl<'a, S> ReplyDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -22047,69 +22930,54 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.replies.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("commentId", self._comment_id.to_string()));
-        params.push(("replyId", self._reply_id.to_string()));
+
         for &field in ["fileId", "commentId", "replyId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("commentId", self._comment_id);
+        params.push("replyId", self._reply_id);
+
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "files/{fileId}/comments/{commentId}/replies/{replyId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{commentId}", "commentId"), ("{replyId}", "replyId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(3);
-            for param_name in ["replyId", "commentId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["replyId", "commentId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -22117,21 +22985,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -22147,7 +23021,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -22201,7 +23075,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ReplyDeleteCall<'a, S> {
@@ -22233,25 +23108,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ReplyDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ReplyDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ReplyDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ReplyDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -22260,7 +23146,7 @@ where
 /// Gets a reply.
 ///
 /// A builder for the *get* method supported by a *reply* resource.
-/// It is not used directly, but through a `ReplyMethods` instance.
+/// It is not used directly, but through a [`ReplyMethods`] instance.
 ///
 /// # Example
 ///
@@ -22272,7 +23158,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -22298,14 +23184,14 @@ pub struct ReplyGetCall<'a, S>
     _include_deleted: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ReplyGetCall<'a, S> {}
 
 impl<'a, S> ReplyGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -22316,73 +23202,58 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, CommentReply)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.replies.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("commentId", self._comment_id.to_string()));
-        params.push(("replyId", self._reply_id.to_string()));
-        if let Some(value) = self._include_deleted {
-            params.push(("includeDeleted", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "commentId", "replyId", "includeDeleted"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("commentId", self._comment_id);
+        params.push("replyId", self._reply_id);
+        if let Some(value) = self._include_deleted.as_ref() {
+            params.push("includeDeleted", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/comments/{commentId}/replies/{replyId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Readonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Readonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{commentId}", "commentId"), ("{replyId}", "replyId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(3);
-            for param_name in ["replyId", "commentId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["replyId", "commentId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -22390,21 +23261,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -22420,7 +23297,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -22491,7 +23368,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ReplyGetCall<'a, S> {
@@ -22523,25 +23401,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Readonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Readonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ReplyGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ReplyGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ReplyGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ReplyGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -22550,7 +23439,7 @@ where
 /// Creates a new reply to the given comment.
 ///
 /// A builder for the *insert* method supported by a *reply* resource.
-/// It is not used directly, but through a `ReplyMethods` instance.
+/// It is not used directly, but through a [`ReplyMethods`] instance.
 ///
 /// # Example
 ///
@@ -22563,7 +23452,7 @@ where
 /// use drive2::api::CommentReply;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -22592,14 +23481,14 @@ pub struct ReplyInsertCall<'a, S>
     _comment_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ReplyInsertCall<'a, S> {}
 
 impl<'a, S> ReplyInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -22610,59 +23499,44 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, CommentReply)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.replies.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("commentId", self._comment_id.to_string()));
+
         for &field in ["alt", "fileId", "commentId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("commentId", self._comment_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/comments/{commentId}/replies";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{commentId}", "commentId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["commentId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["commentId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -22676,14 +23550,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -22692,23 +23566,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -22724,7 +23604,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -22787,7 +23667,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ReplyInsertCall<'a, S> {
@@ -22819,25 +23700,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ReplyInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ReplyInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ReplyInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ReplyInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -22846,7 +23738,7 @@ where
 /// Lists all of the replies to a comment.
 ///
 /// A builder for the *list* method supported by a *reply* resource.
-/// It is not used directly, but through a `ReplyMethods` instance.
+/// It is not used directly, but through a [`ReplyMethods`] instance.
 ///
 /// # Example
 ///
@@ -22858,7 +23750,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -22887,14 +23779,14 @@ pub struct ReplyListCall<'a, S>
     _include_deleted: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ReplyListCall<'a, S> {}
 
 impl<'a, S> ReplyListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -22905,78 +23797,63 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, CommentReplyList)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.replies.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(7 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("commentId", self._comment_id.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
-        if let Some(value) = self._include_deleted {
-            params.push(("includeDeleted", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "commentId", "pageToken", "maxResults", "includeDeleted"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(7 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("commentId", self._comment_id);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
+        }
+        if let Some(value) = self._include_deleted.as_ref() {
+            params.push("includeDeleted", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/comments/{commentId}/replies";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Readonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Readonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{commentId}", "commentId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["commentId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["commentId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -22984,21 +23861,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -23014,7 +23897,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -23089,7 +23972,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ReplyListCall<'a, S> {
@@ -23121,25 +24005,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Readonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Readonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ReplyListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ReplyListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ReplyListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ReplyListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -23148,7 +24043,7 @@ where
 /// Updates an existing reply.
 ///
 /// A builder for the *patch* method supported by a *reply* resource.
-/// It is not used directly, but through a `ReplyMethods` instance.
+/// It is not used directly, but through a [`ReplyMethods`] instance.
 ///
 /// # Example
 ///
@@ -23161,7 +24056,7 @@ where
 /// use drive2::api::CommentReply;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -23191,14 +24086,14 @@ pub struct ReplyPatchCall<'a, S>
     _reply_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ReplyPatchCall<'a, S> {}
 
 impl<'a, S> ReplyPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -23209,60 +24104,45 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, CommentReply)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.replies.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("commentId", self._comment_id.to_string()));
-        params.push(("replyId", self._reply_id.to_string()));
+
         for &field in ["alt", "fileId", "commentId", "replyId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("commentId", self._comment_id);
+        params.push("replyId", self._reply_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/comments/{commentId}/replies/{replyId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{commentId}", "commentId"), ("{replyId}", "replyId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(3);
-            for param_name in ["replyId", "commentId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["replyId", "commentId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -23276,14 +24156,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -23292,23 +24172,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -23324,7 +24210,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -23397,7 +24283,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ReplyPatchCall<'a, S> {
@@ -23429,25 +24316,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ReplyPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ReplyPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ReplyPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ReplyPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -23456,7 +24354,7 @@ where
 /// Updates an existing reply.
 ///
 /// A builder for the *update* method supported by a *reply* resource.
-/// It is not used directly, but through a `ReplyMethods` instance.
+/// It is not used directly, but through a [`ReplyMethods`] instance.
 ///
 /// # Example
 ///
@@ -23469,7 +24367,7 @@ where
 /// use drive2::api::CommentReply;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -23499,14 +24397,14 @@ pub struct ReplyUpdateCall<'a, S>
     _reply_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ReplyUpdateCall<'a, S> {}
 
 impl<'a, S> ReplyUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -23517,60 +24415,45 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, CommentReply)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.replies.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("commentId", self._comment_id.to_string()));
-        params.push(("replyId", self._reply_id.to_string()));
+
         for &field in ["alt", "fileId", "commentId", "replyId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("commentId", self._comment_id);
+        params.push("replyId", self._reply_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/comments/{commentId}/replies/{replyId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{commentId}", "commentId"), ("{replyId}", "replyId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(3);
-            for param_name in ["replyId", "commentId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["replyId", "commentId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -23584,14 +24467,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -23600,23 +24483,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -23632,7 +24521,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -23705,7 +24594,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ReplyUpdateCall<'a, S> {
@@ -23737,25 +24627,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ReplyUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ReplyUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ReplyUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ReplyUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -23764,7 +24665,7 @@ where
 /// Permanently deletes a file version. You can only delete revisions for files with binary content, like images or videos. Revisions for other files, like Google Docs or Sheets, and the last remaining file version can't be deleted.
 ///
 /// A builder for the *delete* method supported by a *revision* resource.
-/// It is not used directly, but through a `RevisionMethods` instance.
+/// It is not used directly, but through a [`RevisionMethods`] instance.
 ///
 /// # Example
 ///
@@ -23776,7 +24677,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -23799,14 +24700,14 @@ pub struct RevisionDeleteCall<'a, S>
     _revision_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for RevisionDeleteCall<'a, S> {}
 
 impl<'a, S> RevisionDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -23817,68 +24718,53 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.revisions.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("revisionId", self._revision_id.to_string()));
+
         for &field in ["fileId", "revisionId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("revisionId", self._revision_id);
+
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "files/{fileId}/revisions/{revisionId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{revisionId}", "revisionId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["revisionId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["revisionId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -23886,21 +24772,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -23916,7 +24808,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -23960,7 +24852,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> RevisionDeleteCall<'a, S> {
@@ -23992,25 +24885,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> RevisionDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> RevisionDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> RevisionDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> RevisionDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -24019,7 +24923,7 @@ where
 /// Gets a specific revision.
 ///
 /// A builder for the *get* method supported by a *revision* resource.
-/// It is not used directly, but through a `RevisionMethods` instance.
+/// It is not used directly, but through a [`RevisionMethods`] instance.
 ///
 /// # Example
 ///
@@ -24031,7 +24935,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -24054,14 +24958,14 @@ pub struct RevisionGetCall<'a, S>
     _revision_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for RevisionGetCall<'a, S> {}
 
 impl<'a, S> RevisionGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -24072,69 +24976,54 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Revision)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.revisions.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("revisionId", self._revision_id.to_string()));
+
         for &field in ["alt", "fileId", "revisionId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("revisionId", self._revision_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/revisions/{revisionId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{revisionId}", "revisionId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["revisionId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["revisionId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -24142,21 +25031,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -24172,7 +25067,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -24226,7 +25121,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> RevisionGetCall<'a, S> {
@@ -24258,25 +25154,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::MetadataReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::MetadataReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> RevisionGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> RevisionGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> RevisionGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> RevisionGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -24285,7 +25192,7 @@ where
 /// Lists a file's revisions.
 ///
 /// A builder for the *list* method supported by a *revision* resource.
-/// It is not used directly, but through a `RevisionMethods` instance.
+/// It is not used directly, but through a [`RevisionMethods`] instance.
 ///
 /// # Example
 ///
@@ -24297,7 +25204,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -24323,14 +25230,14 @@ pub struct RevisionListCall<'a, S>
     _max_results: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for RevisionListCall<'a, S> {}
 
 impl<'a, S> RevisionListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -24341,74 +25248,59 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, RevisionList)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.revisions.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
+
         for &field in ["alt", "fileId", "pageToken", "maxResults"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/revisions";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::MetadataReadonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -24416,21 +25308,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -24446,7 +25344,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -24504,7 +25402,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> RevisionListCall<'a, S> {
@@ -24536,25 +25435,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::MetadataReadonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::MetadataReadonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> RevisionListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> RevisionListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> RevisionListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> RevisionListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -24563,7 +25473,7 @@ where
 /// Updates a revision.
 ///
 /// A builder for the *patch* method supported by a *revision* resource.
-/// It is not used directly, but through a `RevisionMethods` instance.
+/// It is not used directly, but through a [`RevisionMethods`] instance.
 ///
 /// # Example
 ///
@@ -24576,7 +25486,7 @@ where
 /// use drive2::api::Revision;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -24605,14 +25515,14 @@ pub struct RevisionPatchCall<'a, S>
     _revision_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for RevisionPatchCall<'a, S> {}
 
 impl<'a, S> RevisionPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -24623,59 +25533,44 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Revision)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.revisions.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("revisionId", self._revision_id.to_string()));
+
         for &field in ["alt", "fileId", "revisionId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("revisionId", self._revision_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/revisions/{revisionId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{revisionId}", "revisionId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["revisionId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["revisionId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -24689,14 +25584,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -24705,23 +25600,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -24737,7 +25638,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -24800,7 +25701,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> RevisionPatchCall<'a, S> {
@@ -24832,25 +25734,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> RevisionPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> RevisionPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> RevisionPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> RevisionPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -24859,7 +25772,7 @@ where
 /// Updates a revision.
 ///
 /// A builder for the *update* method supported by a *revision* resource.
-/// It is not used directly, but through a `RevisionMethods` instance.
+/// It is not used directly, but through a [`RevisionMethods`] instance.
 ///
 /// # Example
 ///
@@ -24872,7 +25785,7 @@ where
 /// use drive2::api::Revision;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -24901,14 +25814,14 @@ pub struct RevisionUpdateCall<'a, S>
     _revision_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for RevisionUpdateCall<'a, S> {}
 
 impl<'a, S> RevisionUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -24919,59 +25832,44 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Revision)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.revisions.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("fileId", self._file_id.to_string()));
-        params.push(("revisionId", self._revision_id.to_string()));
+
         for &field in ["alt", "fileId", "revisionId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("fileId", self._file_id);
+        params.push("revisionId", self._revision_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "files/{fileId}/revisions/{revisionId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{fileId}", "fileId"), ("{revisionId}", "revisionId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(2);
-            for param_name in ["revisionId", "fileId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["revisionId", "fileId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -24985,14 +25883,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -25001,23 +25899,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -25033,7 +25937,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -25096,7 +26000,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> RevisionUpdateCall<'a, S> {
@@ -25128,25 +26033,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> RevisionUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> RevisionUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> RevisionUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> RevisionUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -25155,7 +26071,7 @@ where
 /// Deprecated use drives.delete instead.
 ///
 /// A builder for the *delete* method supported by a *teamdrive* resource.
-/// It is not used directly, but through a `TeamdriveMethods` instance.
+/// It is not used directly, but through a [`TeamdriveMethods`] instance.
 ///
 /// # Example
 ///
@@ -25167,7 +26083,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -25189,14 +26105,14 @@ pub struct TeamdriveDeleteCall<'a, S>
     _team_drive_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for TeamdriveDeleteCall<'a, S> {}
 
 impl<'a, S> TeamdriveDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -25207,67 +26123,52 @@ where
     pub async fn doit(mut self) -> client::Result<hyper::Response<hyper::body::Body>> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.teamdrives.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(2 + self._additional_params.len());
-        params.push(("teamDriveId", self._team_drive_id.to_string()));
+
         for &field in ["teamDriveId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
+        let mut params = Params::with_capacity(2 + self._additional_params.len());
+        params.push("teamDriveId", self._team_drive_id);
+
+        params.extend(self._additional_params.iter());
 
         let mut url = self.hub._base_url.clone() + "teamdrives/{teamDriveId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{teamDriveId}", "teamDriveId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["teamDriveId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["teamDriveId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -25275,21 +26176,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -25305,7 +26212,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -25339,7 +26246,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> TeamdriveDeleteCall<'a, S> {
@@ -25371,25 +26279,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> TeamdriveDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> TeamdriveDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> TeamdriveDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> TeamdriveDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -25398,7 +26317,7 @@ where
 /// Deprecated use drives.get instead.
 ///
 /// A builder for the *get* method supported by a *teamdrive* resource.
-/// It is not used directly, but through a `TeamdriveMethods` instance.
+/// It is not used directly, but through a [`TeamdriveMethods`] instance.
 ///
 /// # Example
 ///
@@ -25410,7 +26329,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -25434,14 +26353,14 @@ pub struct TeamdriveGetCall<'a, S>
     _use_domain_admin_access: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for TeamdriveGetCall<'a, S> {}
 
 impl<'a, S> TeamdriveGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -25452,71 +26371,56 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, TeamDrive)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.teamdrives.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("teamDriveId", self._team_drive_id.to_string()));
-        if let Some(value) = self._use_domain_admin_access {
-            params.push(("useDomainAdminAccess", value.to_string()));
-        }
+
         for &field in ["alt", "teamDriveId", "useDomainAdminAccess"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("teamDriveId", self._team_drive_id);
+        if let Some(value) = self._use_domain_admin_access.as_ref() {
+            params.push("useDomainAdminAccess", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "teamdrives/{teamDriveId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Readonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Readonly.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{teamDriveId}", "teamDriveId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["teamDriveId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["teamDriveId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -25524,21 +26428,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -25554,7 +26464,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -25605,7 +26515,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> TeamdriveGetCall<'a, S> {
@@ -25637,25 +26548,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Readonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Readonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> TeamdriveGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> TeamdriveGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> TeamdriveGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> TeamdriveGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -25664,7 +26586,7 @@ where
 /// Deprecated use drives.insert instead.
 ///
 /// A builder for the *insert* method supported by a *teamdrive* resource.
-/// It is not used directly, but through a `TeamdriveMethods` instance.
+/// It is not used directly, but through a [`TeamdriveMethods`] instance.
 ///
 /// # Example
 ///
@@ -25677,7 +26599,7 @@ where
 /// use drive2::api::TeamDrive;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -25705,14 +26627,14 @@ pub struct TeamdriveInsertCall<'a, S>
     _request_id: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for TeamdriveInsertCall<'a, S> {}
 
 impl<'a, S> TeamdriveInsertCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -25723,37 +26645,36 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, TeamDrive)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.teamdrives.insert",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("requestId", self._request_id.to_string()));
+
         for &field in ["alt", "requestId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("requestId", self._request_id);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "teamdrives";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -25767,14 +26688,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -25783,23 +26704,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -25815,7 +26742,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -25868,7 +26795,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> TeamdriveInsertCall<'a, S> {
@@ -25900,25 +26828,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> TeamdriveInsertCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> TeamdriveInsertCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> TeamdriveInsertCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> TeamdriveInsertCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -25927,7 +26866,7 @@ where
 /// Deprecated use drives.list instead.
 ///
 /// A builder for the *list* method supported by a *teamdrive* resource.
-/// It is not used directly, but through a `TeamdriveMethods` instance.
+/// It is not used directly, but through a [`TeamdriveMethods`] instance.
 ///
 /// # Example
 ///
@@ -25939,7 +26878,7 @@ where
 /// # extern crate google_drive2 as drive2;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -25968,14 +26907,14 @@ pub struct TeamdriveListCall<'a, S>
     _max_results: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for TeamdriveListCall<'a, S> {}
 
 impl<'a, S> TeamdriveListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -25986,58 +26925,57 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, TeamDriveList)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.teamdrives.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        if let Some(value) = self._use_domain_admin_access {
-            params.push(("useDomainAdminAccess", value.to_string()));
-        }
-        if let Some(value) = self._q {
-            params.push(("q", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._max_results {
-            params.push(("maxResults", value.to_string()));
-        }
+
         for &field in ["alt", "useDomainAdminAccess", "q", "pageToken", "maxResults"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        if let Some(value) = self._use_domain_admin_access.as_ref() {
+            params.push("useDomainAdminAccess", value.to_string());
+        }
+        if let Some(value) = self._q.as_ref() {
+            params.push("q", value);
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._max_results.as_ref() {
+            params.push("maxResults", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "teamdrives";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Readonly.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Readonly.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -26045,21 +26983,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -26075,7 +27019,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -26137,7 +27081,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> TeamdriveListCall<'a, S> {
@@ -26169,25 +27114,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Readonly`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Readonly`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> TeamdriveListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> TeamdriveListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> TeamdriveListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> TeamdriveListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -26196,7 +27152,7 @@ where
 /// Deprecated use drives.update instead.
 ///
 /// A builder for the *update* method supported by a *teamdrive* resource.
-/// It is not used directly, but through a `TeamdriveMethods` instance.
+/// It is not used directly, but through a [`TeamdriveMethods`] instance.
 ///
 /// # Example
 ///
@@ -26209,7 +27165,7 @@ where
 /// use drive2::api::TeamDrive;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls};
+/// # use drive2::{DriveHub, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -26239,14 +27195,14 @@ pub struct TeamdriveUpdateCall<'a, S>
     _use_domain_admin_access: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for TeamdriveUpdateCall<'a, S> {}
 
 impl<'a, S> TeamdriveUpdateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -26257,61 +27213,46 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, TeamDrive)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "drive.teamdrives.update",
                                http_method: hyper::Method::PUT });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("teamDriveId", self._team_drive_id.to_string()));
-        if let Some(value) = self._use_domain_admin_access {
-            params.push(("useDomainAdminAccess", value.to_string()));
-        }
+
         for &field in ["alt", "teamDriveId", "useDomainAdminAccess"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("teamDriveId", self._team_drive_id);
+        if let Some(value) = self._use_domain_admin_access.as_ref() {
+            params.push("useDomainAdminAccess", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "teamdrives/{teamDriveId}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::Full.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::Full.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{teamDriveId}", "teamDriveId")].iter() {
-            let mut replace_with: Option<&str> = None;
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = Some(value);
-                    break;
-                }
-            }
-            url = url.replace(find_this, replace_with.expect("to find substitution value in params"));
+            url = params.uri_replacement(url, param_name, find_this, false);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["teamDriveId"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["teamDriveId"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -26325,14 +27266,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -26341,23 +27282,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PUT).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PUT)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -26373,7 +27320,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -26433,7 +27380,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> TeamdriveUpdateCall<'a, S> {
@@ -26465,25 +27413,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::Full`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::Full`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> TeamdriveUpdateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> TeamdriveUpdateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> TeamdriveUpdateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> TeamdriveUpdateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }

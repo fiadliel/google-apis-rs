@@ -1,19 +1,20 @@
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::default::Default;
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::error::Error as StdError;
 use serde_json as json;
 use std::io;
 use std::fs;
 use std::mem;
-use std::thread::sleep;
 
-use http::Uri;
 use hyper::client::connect;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::time::sleep;
 use tower_service;
-use crate::client;
+use serde::{Serialize, Deserialize};
+
+use crate::{client, client::GetToken, client::serde_with};
 
 // ##############
 // UTILITIES ###
@@ -62,7 +63,7 @@ impl Default for Scope {
 /// use datacatalog1::{Result, Error};
 /// # async fn dox() {
 /// use std::default::Default;
-/// use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// // Get an ApplicationSecret instance by some means. It contains the `client_id` and 
 /// // `client_secret`, among other things.
@@ -110,7 +111,7 @@ impl Default for Scope {
 #[derive(Clone)]
 pub struct DataCatalog<S> {
     pub client: hyper::Client<S, hyper::body::Body>,
-    pub auth: oauth2::authenticator::Authenticator<S>,
+    pub auth: Box<dyn client::GetToken>,
     _user_agent: String,
     _base_url: String,
     _root_url: String,
@@ -120,11 +121,11 @@ impl<'a, S> client::Hub for DataCatalog<S> {}
 
 impl<'a, S> DataCatalog<S> {
 
-    pub fn new(client: hyper::Client<S, hyper::body::Body>, authenticator: oauth2::authenticator::Authenticator<S>) -> DataCatalog<S> {
+    pub fn new<A: 'static + client::GetToken>(client: hyper::Client<S, hyper::body::Body>, auth: A) -> DataCatalog<S> {
         DataCatalog {
             client,
-            auth: authenticator,
-            _user_agent: "google-api-rust-client/4.0.1".to_string(),
+            auth: Box::new(auth),
+            _user_agent: "google-api-rust-client/5.0.2-beta-1".to_string(),
             _base_url: "https://datacatalog.googleapis.com/".to_string(),
             _root_url: "https://datacatalog.googleapis.com/".to_string(),
         }
@@ -141,7 +142,7 @@ impl<'a, S> DataCatalog<S> {
     }
 
     /// Set the user-agent header field to use in all requests to the server.
-    /// It defaults to `google-api-rust-client/4.0.1`.
+    /// It defaults to `google-api-rust-client/5.0.2-beta-1`.
     ///
     /// Returns the previously set user-agent.
     pub fn user_agent(&mut self, agent_name: String) -> String {
@@ -173,13 +174,17 @@ impl<'a, S> DataCatalog<S> {
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Binding {
     /// The condition that is associated with this binding. If the condition evaluates to `true`, then this binding applies to the current request. If the condition evaluates to `false`, then this binding does not apply to the current request. However, a different role binding might grant the same role to one or more of the principals in this binding. To learn which resources support conditions in their IAM policies, see the [IAM documentation](https://cloud.google.com/iam/help/conditions/resource-policies).
+    
     pub condition: Option<Expr>,
     /// Specifies the principals requesting access for a Cloud Platform resource. `members` can have the following values: * `allUsers`: A special identifier that represents anyone who is on the internet; with or without a Google account. * `allAuthenticatedUsers`: A special identifier that represents anyone who is authenticated with a Google account or a service account. * `user:{emailid}`: An email address that represents a specific Google account. For example, `alice@example.com` . * `serviceAccount:{emailid}`: An email address that represents a service account. For example, `my-other-app@appspot.gserviceaccount.com`. * `group:{emailid}`: An email address that represents a Google group. For example, `admins@example.com`. * `deleted:user:{emailid}?uid={uniqueid}`: An email address (plus unique identifier) representing a user that has been recently deleted. For example, `alice@example.com?uid=123456789012345678901`. If the user is recovered, this value reverts to `user:{emailid}` and the recovered user retains the role in the binding. * `deleted:serviceAccount:{emailid}?uid={uniqueid}`: An email address (plus unique identifier) representing a service account that has been recently deleted. For example, `my-other-app@appspot.gserviceaccount.com?uid=123456789012345678901`. If the service account is undeleted, this value reverts to `serviceAccount:{emailid}` and the undeleted service account retains the role in the binding. * `deleted:group:{emailid}?uid={uniqueid}`: An email address (plus unique identifier) representing a Google group that has been recently deleted. For example, `admins@example.com?uid=123456789012345678901`. If the group is recovered, this value reverts to `group:{emailid}` and the recovered group retains the role in the binding. * `domain:{domain}`: The G Suite domain (primary) that represents all the users of that domain. For example, `google.com` or `example.com`. 
+    
     pub members: Option<Vec<String>>,
     /// Role that is assigned to the list of `members`, or principals. For example, `roles/viewer`, `roles/editor`, or `roles/owner`.
+    
     pub role: Option<String>,
 }
 
@@ -202,6 +207,7 @@ impl client::Part for Binding {}
 /// * [locations taxonomies policy tags delete projects](ProjectLocationTaxonomyPolicyTagDeleteCall) (response)
 /// * [locations taxonomies delete projects](ProjectLocationTaxonomyDeleteCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Empty { _never_set: Option<bool> }
 
@@ -212,15 +218,20 @@ impl client::ResponseResult for Empty {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Expr {
     /// Optional. Description of the expression. This is a longer text which describes the expression, e.g. when hovered over it in a UI.
+    
     pub description: Option<String>,
     /// Textual representation of an expression in Common Expression Language syntax.
+    
     pub expression: Option<String>,
     /// Optional. String indicating the location of the expression for error reporting, e.g. a file name and a position in the file.
+    
     pub location: Option<String>,
     /// Optional. Title for the expression, i.e. a short string describing its purpose. This can be used e.g. in UIs which allow to enter the expression.
+    
     pub title: Option<String>,
 }
 
@@ -240,9 +251,11 @@ impl client::Part for Expr {}
 /// * [locations taxonomies policy tags get iam policy projects](ProjectLocationTaxonomyPolicyTagGetIamPolicyCall) (request)
 /// * [locations taxonomies get iam policy projects](ProjectLocationTaxonomyGetIamPolicyCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GetIamPolicyRequest {
     /// OPTIONAL: A `GetPolicyOptions` object for specifying options to `GetIamPolicy`.
+    
     pub options: Option<GetPolicyOptions>,
 }
 
@@ -253,10 +266,12 @@ impl client::RequestValue for GetIamPolicyRequest {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GetPolicyOptions {
     /// Optional. The maximum policy version that will be used to format the policy. Valid values are 0, 1, and 3. Requests specifying an invalid value will be rejected. Requests for policies with any conditional role bindings must specify version 3. Policies with no conditional role bindings may specify any valid value or leave the field unset. The policy in the response might use the policy version that you specified, or it might use a lower policy version. For example, if you specify version 3, but the policy has no conditional role bindings, the response uses version 1. To learn which resources support conditions in their IAM policies, see the [IAM documentation](https://cloud.google.com/iam/help/conditions/resource-policies).
     #[serde(rename="requestedPolicyVersion")]
+    
     pub requested_policy_version: Option<i32>,
 }
 
@@ -267,16 +282,20 @@ impl client::Part for GetPolicyOptions {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1BigQueryConnectionSpec {
     /// Specification for the BigQuery connection to a Cloud SQL instance.
     #[serde(rename="cloudSql")]
+    
     pub cloud_sql: Option<GoogleCloudDatacatalogV1CloudSqlBigQueryConnectionSpec>,
     /// The type of the BigQuery connection.
     #[serde(rename="connectionType")]
+    
     pub connection_type: Option<String>,
     /// True if there are credentials attached to the BigQuery connection; false otherwise.
     #[serde(rename="hasCredential")]
+    
     pub has_credential: Option<bool>,
 }
 
@@ -287,18 +306,24 @@ impl client::Part for GoogleCloudDatacatalogV1BigQueryConnectionSpec {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1BigQueryDateShardedSpec {
     /// Output only. The Data Catalog resource name of the dataset entry the current table belongs to. For example: `projects/{PROJECT_ID}/locations/{LOCATION}/entrygroups/{ENTRY_GROUP_ID}/entries/{ENTRY_ID}`.
+    
     pub dataset: Option<String>,
     /// Output only. BigQuery resource name of the latest shard.
     #[serde(rename="latestShardResource")]
+    
     pub latest_shard_resource: Option<String>,
     /// Output only. Total number of shards.
     #[serde(rename="shardCount")]
-    pub shard_count: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub shard_count: Option<i64>,
     /// Output only. The table name prefix of the shards. The name of any given shard is `[table_prefix]YYYYMMDD`. For example, for the `MyTable20180101` shard, the `table_prefix` is `MyTable`.
     #[serde(rename="tablePrefix")]
+    
     pub table_prefix: Option<String>,
 }
 
@@ -309,10 +334,12 @@ impl client::Part for GoogleCloudDatacatalogV1BigQueryDateShardedSpec {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1BigQueryRoutineSpec {
     /// Paths of the imported libraries.
     #[serde(rename="importedLibraries")]
+    
     pub imported_libraries: Option<Vec<String>>,
 }
 
@@ -323,16 +350,20 @@ impl client::Part for GoogleCloudDatacatalogV1BigQueryRoutineSpec {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1BigQueryTableSpec {
     /// Output only. The table source type.
     #[serde(rename="tableSourceType")]
+    
     pub table_source_type: Option<String>,
     /// Specification of a BigQuery table. Populated only if the `table_source_type` is `BIGQUERY_TABLE`.
     #[serde(rename="tableSpec")]
+    
     pub table_spec: Option<GoogleCloudDatacatalogV1TableSpec>,
     /// Table view specification. Populated only if the `table_source_type` is `BIGQUERY_VIEW`.
     #[serde(rename="viewSpec")]
+    
     pub view_spec: Option<GoogleCloudDatacatalogV1ViewSpec>,
 }
 
@@ -343,12 +374,15 @@ impl client::Part for GoogleCloudDatacatalogV1BigQueryTableSpec {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1BusinessContext {
     /// Contact people for the entry.
+    
     pub contacts: Option<GoogleCloudDatacatalogV1Contacts>,
     /// Entry overview fields for rich text descriptions of entries.
     #[serde(rename="entryOverview")]
+    
     pub entry_overview: Option<GoogleCloudDatacatalogV1EntryOverview>,
 }
 
@@ -359,15 +393,19 @@ impl client::Part for GoogleCloudDatacatalogV1BusinessContext {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1CloudSqlBigQueryConnectionSpec {
     /// Database name.
+    
     pub database: Option<String>,
     /// Cloud SQL instance ID in the format of `project:location:instance`.
     #[serde(rename="instanceId")]
+    
     pub instance_id: Option<String>,
     /// Type of the Cloud SQL database.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -378,18 +416,24 @@ impl client::Part for GoogleCloudDatacatalogV1CloudSqlBigQueryConnectionSpec {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ColumnSchema {
     /// Required. Name of the column. Must be a UTF-8 string without dots (.). The maximum size is 64 bytes.
+    
     pub column: Option<String>,
     /// Optional. Description of the column. Default value is an empty string. The description must be a UTF-8 string with the maximum size of 2000 bytes.
+    
     pub description: Option<String>,
     /// Optional. A column's mode indicates whether values in this column are required, nullable, or repeated. Only `NULLABLE`, `REQUIRED`, and `REPEATED` values are supported. Default mode is `NULLABLE`.
+    
     pub mode: Option<String>,
     /// Optional. Schema of sub-columns. A column can have zero or more sub-columns.
+    
     pub subcolumns: Option<Vec<GoogleCloudDatacatalogV1ColumnSchema>>,
     /// Required. Type of the column. Must be a UTF-8 string with the maximum size of 128 bytes.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -405,9 +449,11 @@ impl client::Part for GoogleCloudDatacatalogV1ColumnSchema {}
 /// 
 /// * [locations entry groups entries modify entry contacts projects](ProjectLocationEntryGroupEntryModifyEntryContactCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1Contacts {
     /// The list of contact people for the entry.
+    
     pub people: Option<Vec<GoogleCloudDatacatalogV1ContactsPerson>>,
 }
 
@@ -418,11 +464,14 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1Contacts {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ContactsPerson {
     /// Designation of the person, for example, Data Steward.
+    
     pub designation: Option<String>,
     /// Email of the person in the format of `john.doe@xyz`, ``, or `John Doe`.
+    
     pub email: Option<String>,
 }
 
@@ -433,9 +482,11 @@ impl client::Part for GoogleCloudDatacatalogV1ContactsPerson {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1CrossRegionalSource {
     /// Required. The resource name of the source taxonomy to import.
+    
     pub taxonomy: Option<String>,
 }
 
@@ -446,17 +497,22 @@ impl client::Part for GoogleCloudDatacatalogV1CrossRegionalSource {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1DataSource {
     /// Full name of a resource as defined by the service. For example: `//bigquery.googleapis.com/projects/{PROJECT_ID}/locations/{LOCATION}/datasets/{DATASET_ID}/tables/{TABLE_ID}`
+    
     pub resource: Option<String>,
     /// Service that physically stores the data.
+    
     pub service: Option<String>,
     /// Output only. Data Catalog entry name, if applicable.
     #[serde(rename="sourceEntry")]
+    
     pub source_entry: Option<String>,
     /// Detailed properties of the underlying storage.
     #[serde(rename="storageProperties")]
+    
     pub storage_properties: Option<GoogleCloudDatacatalogV1StorageProperties>,
 }
 
@@ -467,10 +523,12 @@ impl client::Part for GoogleCloudDatacatalogV1DataSource {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1DataSourceConnectionSpec {
     /// Fields specific to BigQuery connections.
     #[serde(rename="bigqueryConnectionSpec")]
+    
     pub bigquery_connection_spec: Option<GoogleCloudDatacatalogV1BigQueryConnectionSpec>,
 }
 
@@ -481,13 +539,16 @@ impl client::Part for GoogleCloudDatacatalogV1DataSourceConnectionSpec {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1DatabaseTableSpec {
     /// Fields specific to a Dataplex table and present only in the Dataplex table entries.
     #[serde(rename="dataplexTable")]
+    
     pub dataplex_table: Option<GoogleCloudDatacatalogV1DataplexTableSpec>,
     /// Type of this table.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -498,18 +559,23 @@ impl client::Part for GoogleCloudDatacatalogV1DatabaseTableSpec {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1DataplexExternalTable {
     /// Name of the Data Catalog entry representing the external table.
     #[serde(rename="dataCatalogEntry")]
+    
     pub data_catalog_entry: Option<String>,
     /// Fully qualified name (FQN) of the external table.
     #[serde(rename="fullyQualifiedName")]
+    
     pub fully_qualified_name: Option<String>,
     /// Google Cloud resource name of the external table.
     #[serde(rename="googleCloudResource")]
+    
     pub google_cloud_resource: Option<String>,
     /// Service in which the external table is registered.
+    
     pub system: Option<String>,
 }
 
@@ -520,10 +586,12 @@ impl client::Part for GoogleCloudDatacatalogV1DataplexExternalTable {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1DataplexFilesetSpec {
     /// Common Dataplex fields.
     #[serde(rename="dataplexSpec")]
+    
     pub dataplex_spec: Option<GoogleCloudDatacatalogV1DataplexSpec>,
 }
 
@@ -534,18 +602,23 @@ impl client::Part for GoogleCloudDatacatalogV1DataplexFilesetSpec {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1DataplexSpec {
     /// Fully qualified resource name of an asset in Dataplex, to which the underlying data source (Cloud Storage bucket or BigQuery dataset) of the entity is attached.
+    
     pub asset: Option<String>,
     /// Compression format of the data, e.g., zip, gzip etc.
     #[serde(rename="compressionFormat")]
+    
     pub compression_format: Option<String>,
     /// Format of the data.
     #[serde(rename="dataFormat")]
+    
     pub data_format: Option<GoogleCloudDatacatalogV1PhysicalSchema>,
     /// Project ID of the underlying Cloud Storage or BigQuery data. Note that this may not be the same project as the correspondingly Dataplex lake / zone / asset.
     #[serde(rename="projectId")]
+    
     pub project_id: Option<String>,
 }
 
@@ -556,16 +629,20 @@ impl client::Part for GoogleCloudDatacatalogV1DataplexSpec {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1DataplexTableSpec {
     /// Common Dataplex fields.
     #[serde(rename="dataplexSpec")]
+    
     pub dataplex_spec: Option<GoogleCloudDatacatalogV1DataplexSpec>,
     /// List of external tables registered by Dataplex in other systems based on the same underlying data. External tables allow to query this data in those systems.
     #[serde(rename="externalTables")]
+    
     pub external_tables: Option<Vec<GoogleCloudDatacatalogV1DataplexExternalTable>>,
     /// Indicates if the table schema is managed by the user or not.
     #[serde(rename="userManaged")]
+    
     pub user_managed: Option<bool>,
 }
 
@@ -584,72 +661,96 @@ impl client::Part for GoogleCloudDatacatalogV1DataplexTableSpec {}
 /// * [locations entry groups entries get projects](ProjectLocationEntryGroupEntryGetCall) (response)
 /// * [locations entry groups entries patch projects](ProjectLocationEntryGroupEntryPatchCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1Entry {
     /// Specification for a group of BigQuery tables with the `[prefix]YYYYMMDD` name pattern. For more information, see [Introduction to partitioned tables] (https://cloud.google.com/bigquery/docs/partitioned-tables#partitioning_versus_sharding).
     #[serde(rename="bigqueryDateShardedSpec")]
+    
     pub bigquery_date_sharded_spec: Option<GoogleCloudDatacatalogV1BigQueryDateShardedSpec>,
     /// Specification that applies to a BigQuery table. Valid only for entries with the `TABLE` type.
     #[serde(rename="bigqueryTableSpec")]
+    
     pub bigquery_table_spec: Option<GoogleCloudDatacatalogV1BigQueryTableSpec>,
     /// Business Context of the entry. Not supported for BigQuery datasets
     #[serde(rename="businessContext")]
+    
     pub business_context: Option<GoogleCloudDatacatalogV1BusinessContext>,
     /// Output only. Physical location of the entry.
     #[serde(rename="dataSource")]
+    
     pub data_source: Option<GoogleCloudDatacatalogV1DataSource>,
     /// Specification that applies to a data source connection. Valid only for entries with the `DATA_SOURCE_CONNECTION` type.
     #[serde(rename="dataSourceConnectionSpec")]
+    
     pub data_source_connection_spec: Option<GoogleCloudDatacatalogV1DataSourceConnectionSpec>,
     /// Specification that applies to a table resource. Valid only for entries with the `TABLE` type.
     #[serde(rename="databaseTableSpec")]
+    
     pub database_table_spec: Option<GoogleCloudDatacatalogV1DatabaseTableSpec>,
     /// Entry description that can consist of several sentences or paragraphs that describe entry contents. The description must not contain Unicode non-characters as well as C0 and C1 control codes except tabs (HT), new lines (LF), carriage returns (CR), and page breaks (FF). The maximum size is 2000 bytes when encoded in UTF-8. Default value is an empty string.
+    
     pub description: Option<String>,
     /// Display name of an entry. The name must contain only Unicode letters, numbers (0-9), underscores (_), dashes (-), spaces ( ), and can't start or end with spaces. The maximum size is 200 bytes when encoded in UTF-8. Default value is an empty string.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// Specification that applies to a fileset resource. Valid only for entries with the `FILESET` type.
     #[serde(rename="filesetSpec")]
+    
     pub fileset_spec: Option<GoogleCloudDatacatalogV1FilesetSpec>,
     /// Fully qualified name (FQN) of the resource. Set automatically for entries representing resources from synced systems. Settable only during creation and read-only afterwards. Can be used for search and lookup of the entries. FQNs take two forms: * For non-regionalized resources: `{SYSTEM}:{PROJECT}.{PATH_TO_RESOURCE_SEPARATED_WITH_DOTS}` * For regionalized resources: `{SYSTEM}:{PROJECT}.{LOCATION_ID}.{PATH_TO_RESOURCE_SEPARATED_WITH_DOTS}` Example for a DPMS table: `dataproc_metastore:{PROJECT_ID}.{LOCATION_ID}.{INSTANCE_ID}.{DATABASE_ID}.{TABLE_ID}`
     #[serde(rename="fullyQualifiedName")]
+    
     pub fully_qualified_name: Option<String>,
     /// Specification that applies to a Cloud Storage fileset. Valid only for entries with the `FILESET` type.
     #[serde(rename="gcsFilesetSpec")]
+    
     pub gcs_fileset_spec: Option<GoogleCloudDatacatalogV1GcsFilesetSpec>,
     /// Output only. Indicates the entry's source system that Data Catalog integrates with, such as BigQuery, Pub/Sub, or Dataproc Metastore.
     #[serde(rename="integratedSystem")]
+    
     pub integrated_system: Option<String>,
     /// Cloud labels attached to the entry. In Data Catalog, you can create and modify labels attached only to custom entries. Synced entries have unmodifiable labels that come from the source system.
+    
     pub labels: Option<HashMap<String, String>>,
     /// The resource this metadata entry refers to. For Google Cloud Platform resources, `linked_resource` is the [Full Resource Name] (https://cloud.google.com/apis/design/resource_names#full_resource_name). For example, the `linked_resource` for a table resource from BigQuery is: `//bigquery.googleapis.com/projects/{PROJECT_ID}/datasets/{DATASET_ID}/tables/{TABLE_ID}` Output only when the entry is one of the types in the `EntryType` enum. For entries with a `user_specified_type`, this field is optional and defaults to an empty string. The resource string must contain only letters (a-z, A-Z), numbers (0-9), underscores (_), periods (.), colons (:), slashes (/), dashes (-), and hashes (#). The maximum size is 200 bytes when encoded in UTF-8.
     #[serde(rename="linkedResource")]
+    
     pub linked_resource: Option<String>,
     /// Output only. The resource name of an entry in URL format. Note: The entry itself and its child resources might not be stored in the location specified in its name.
+    
     pub name: Option<String>,
     /// Output only. Additional information related to the entry. Private to the current user.
     #[serde(rename="personalDetails")]
+    
     pub personal_details: Option<GoogleCloudDatacatalogV1PersonalDetails>,
     /// Specification that applies to a user-defined function or procedure. Valid only for entries with the `ROUTINE` type.
     #[serde(rename="routineSpec")]
+    
     pub routine_spec: Option<GoogleCloudDatacatalogV1RoutineSpec>,
     /// Schema of the entry. An entry might not have any schema attached to it.
+    
     pub schema: Option<GoogleCloudDatacatalogV1Schema>,
     /// Timestamps from the underlying resource, not from the Data Catalog entry. Output only when the entry has a type listed in the `EntryType` enum. For entries with `user_specified_type`, this field is optional and defaults to an empty timestamp.
     #[serde(rename="sourceSystemTimestamps")]
+    
     pub source_system_timestamps: Option<GoogleCloudDatacatalogV1SystemTimestamps>,
     /// The type of the entry. Only used for entries with types listed in the `EntryType` enum. Currently, only `FILESET` enum value is allowed. All other entries created in Data Catalog must use the `user_specified_type`.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
     /// Output only. Resource usage statistics.
     #[serde(rename="usageSignal")]
+    
     pub usage_signal: Option<GoogleCloudDatacatalogV1UsageSignal>,
     /// Indicates the entry's source system that Data Catalog doesn't automatically integrate with. The `user_specified_system` string has the following limitations: * Is case insensitive. * Must begin with a letter or underscore. * Can only contain letters, numbers, and underscores. * Must be at least 1 character and at most 64 characters long.
     #[serde(rename="userSpecifiedSystem")]
+    
     pub user_specified_system: Option<String>,
     /// Custom entry type that doesn't match any of the values allowed for input and listed in the `EntryType` enum. When creating an entry, first check the type values in the enum. If there are no appropriate types for the new entry, provide a custom value, for example, `my_special_type`. The `user_specified_type` string has the following limitations: * Is case insensitive. * Must begin with a letter or underscore. * Can only contain letters, numbers, and underscores. * Must be at least 1 character and at most 64 characters long.
     #[serde(rename="userSpecifiedType")]
+    
     pub user_specified_type: Option<String>,
 }
 
@@ -668,17 +769,22 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1Entry {}
 /// * [locations entry groups get projects](ProjectLocationEntryGroupGetCall) (response)
 /// * [locations entry groups patch projects](ProjectLocationEntryGroupPatchCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1EntryGroup {
     /// Output only. Timestamps of the entry group. Default value is empty.
     #[serde(rename="dataCatalogTimestamps")]
+    
     pub data_catalog_timestamps: Option<GoogleCloudDatacatalogV1SystemTimestamps>,
     /// Entry group description. Can consist of several sentences or paragraphs that describe the entry group contents. Default value is an empty string.
+    
     pub description: Option<String>,
     /// A short name to identify the entry group, for example, "analytics data - jan 2011". Default value is an empty string.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// The resource name of the entry group in URL format. Note: The entry group itself and its child resources might not be stored in the location specified in its name.
+    
     pub name: Option<String>,
 }
 
@@ -695,9 +801,11 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1EntryGroup {}
 /// 
 /// * [locations entry groups entries modify entry overview projects](ProjectLocationEntryGroupEntryModifyEntryOverviewCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1EntryOverview {
     /// Entry overview with support for rich text. The overview must only contain Unicode characters, and should be formatted using HTML. The maximum length is 10 MiB as this value holds HTML descriptions including encoded images. The maximum length of the text without images is 100 KiB.
+    
     pub overview: Option<String>,
 }
 
@@ -713,9 +821,11 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1EntryOverview {}
 /// 
 /// * [locations taxonomies export projects](ProjectLocationTaxonomyExportCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ExportTaxonomiesResponse {
     /// List of taxonomies and policy tags as nested protocol buffers.
+    
     pub taxonomies: Option<Vec<GoogleCloudDatacatalogV1SerializedTaxonomy>>,
 }
 
@@ -726,13 +836,16 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1ExportTaxonomiesResponse
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1FieldType {
     /// An enum type.
     #[serde(rename="enumType")]
+    
     pub enum_type: Option<GoogleCloudDatacatalogV1FieldTypeEnumType>,
     /// Primitive types, such as string, boolean, etc.
     #[serde(rename="primitiveType")]
+    
     pub primitive_type: Option<String>,
 }
 
@@ -743,10 +856,12 @@ impl client::Part for GoogleCloudDatacatalogV1FieldType {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1FieldTypeEnumType {
     /// The set of allowed values for this enum. This set must not be empty and can include up to 100 allowed values. The display names of the values in this set must not be empty and must be case-insensitively unique within this set. The order of items in this set is preserved. This field can be used to create, remove, and reorder enum values. To rename enum values, use the `RenameTagTemplateFieldEnumValue` method.
     #[serde(rename="allowedValues")]
+    
     pub allowed_values: Option<Vec<GoogleCloudDatacatalogV1FieldTypeEnumTypeEnumValue>>,
 }
 
@@ -757,10 +872,12 @@ impl client::Part for GoogleCloudDatacatalogV1FieldTypeEnumType {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1FieldTypeEnumTypeEnumValue {
     /// Required. The display name of the enum value. Must not be an empty string. The name must contain only Unicode letters, numbers (0-9), underscores (_), dashes (-), spaces ( ), and can't start or end with spaces. The maximum length is 200 characters.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
 }
 
@@ -771,10 +888,12 @@ impl client::Part for GoogleCloudDatacatalogV1FieldTypeEnumTypeEnumValue {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1FilesetSpec {
     /// Fields specific to a Dataplex fileset and present only in the Dataplex fileset entries.
     #[serde(rename="dataplexFileset")]
+    
     pub dataplex_fileset: Option<GoogleCloudDatacatalogV1DataplexFilesetSpec>,
 }
 
@@ -785,17 +904,22 @@ impl client::Part for GoogleCloudDatacatalogV1FilesetSpec {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1GcsFileSpec {
     /// Required. Full file path. Example: `gs://bucket_name/a/b.txt`.
     #[serde(rename="filePath")]
+    
     pub file_path: Option<String>,
     /// Output only. Creation, modification, and expiration timestamps of a Cloud Storage file.
     #[serde(rename="gcsTimestamps")]
+    
     pub gcs_timestamps: Option<GoogleCloudDatacatalogV1SystemTimestamps>,
     /// Output only. File size in bytes.
     #[serde(rename="sizeBytes")]
-    pub size_bytes: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde_with::DisplayFromStr>")]
+    pub size_bytes: Option<i64>,
 }
 
 impl client::Part for GoogleCloudDatacatalogV1GcsFileSpec {}
@@ -805,13 +929,16 @@ impl client::Part for GoogleCloudDatacatalogV1GcsFileSpec {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1GcsFilesetSpec {
     /// Required. Patterns to identify a set of files in Google Cloud Storage. For more information, see [Wildcard Names] (https://cloud.google.com/storage/docs/gsutil/addlhelp/WildcardNames). Note: Currently, bucket wildcards are not supported. Examples of valid `file_patterns`: * `gs://bucket_name/dir/*`: matches all files in `bucket_name/dir` directory * `gs://bucket_name/dir/**`: matches all files in `bucket_name/dir` and all subdirectories * `gs://bucket_name/file*`: matches files prefixed by `file` in `bucket_name` * `gs://bucket_name/??.txt`: matches files with two characters followed by `.txt` in `bucket_name` * `gs://bucket_name/[aeiou].txt`: matches files that contain a single vowel character followed by `.txt` in `bucket_name` * `gs://bucket_name/[a-m].txt`: matches files that contain `a`, `b`, ... or `m` followed by `.txt` in `bucket_name` * `gs://bucket_name/a/*/b`: matches all files in `bucket_name` that match the `a/*/b` pattern, such as `a/c/b`, `a/d/b` * `gs://another_bucket/a.txt`: matches `gs://another_bucket/a.txt` You can combine wildcards to match complex sets of files, for example: `gs://bucket_name/[a-m]??.j*g`
     #[serde(rename="filePatterns")]
+    
     pub file_patterns: Option<Vec<String>>,
     /// Output only. Sample files contained in this fileset, not all files contained in this fileset are represented here.
     #[serde(rename="sampleGcsFileSpecs")]
+    
     pub sample_gcs_file_specs: Option<Vec<GoogleCloudDatacatalogV1GcsFileSpec>>,
 }
 
@@ -827,13 +954,16 @@ impl client::Part for GoogleCloudDatacatalogV1GcsFilesetSpec {}
 /// 
 /// * [locations taxonomies import projects](ProjectLocationTaxonomyImportCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ImportTaxonomiesRequest {
     /// Cross-regional source taxonomy to import.
     #[serde(rename="crossRegionalSource")]
+    
     pub cross_regional_source: Option<GoogleCloudDatacatalogV1CrossRegionalSource>,
     /// Inline source taxonomy to import.
     #[serde(rename="inlineSource")]
+    
     pub inline_source: Option<GoogleCloudDatacatalogV1InlineSource>,
 }
 
@@ -849,9 +979,11 @@ impl client::RequestValue for GoogleCloudDatacatalogV1ImportTaxonomiesRequest {}
 /// 
 /// * [locations taxonomies import projects](ProjectLocationTaxonomyImportCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ImportTaxonomiesResponse {
     /// Imported taxonomies.
+    
     pub taxonomies: Option<Vec<GoogleCloudDatacatalogV1Taxonomy>>,
 }
 
@@ -862,9 +994,11 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1ImportTaxonomiesResponse
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1InlineSource {
     /// Required. Taxonomies to import.
+    
     pub taxonomies: Option<Vec<GoogleCloudDatacatalogV1SerializedTaxonomy>>,
 }
 
@@ -880,12 +1014,15 @@ impl client::Part for GoogleCloudDatacatalogV1InlineSource {}
 /// 
 /// * [locations entry groups entries list projects](ProjectLocationEntryGroupEntryListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ListEntriesResponse {
     /// Entry details.
+    
     pub entries: Option<Vec<GoogleCloudDatacatalogV1Entry>>,
     /// Pagination token of the next results page. Empty if there are no more items in results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
 }
 
@@ -901,13 +1038,16 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1ListEntriesResponse {}
 /// 
 /// * [locations entry groups list projects](ProjectLocationEntryGroupListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ListEntryGroupsResponse {
     /// Entry group details.
     #[serde(rename="entryGroups")]
+    
     pub entry_groups: Option<Vec<GoogleCloudDatacatalogV1EntryGroup>>,
     /// Pagination token to specify in the next call to retrieve the next page of results. Empty if there are no more items.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
 }
 
@@ -923,13 +1063,16 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1ListEntryGroupsResponse 
 /// 
 /// * [locations taxonomies policy tags list projects](ProjectLocationTaxonomyPolicyTagListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ListPolicyTagsResponse {
     /// Pagination token of the next results page. Empty if there are no more results in the list.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// The policy tags that belong to the taxonomy.
     #[serde(rename="policyTags")]
+    
     pub policy_tags: Option<Vec<GoogleCloudDatacatalogV1PolicyTag>>,
 }
 
@@ -946,12 +1089,15 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1ListPolicyTagsResponse {
 /// * [locations entry groups entries tags list projects](ProjectLocationEntryGroupEntryTagListCall) (response)
 /// * [locations entry groups tags list projects](ProjectLocationEntryGroupTagListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ListTagsResponse {
     /// Pagination token of the next results page. Empty if there are no more items in results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// Tag details.
+    
     pub tags: Option<Vec<GoogleCloudDatacatalogV1Tag>>,
 }
 
@@ -967,12 +1113,15 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1ListTagsResponse {}
 /// 
 /// * [locations taxonomies list projects](ProjectLocationTaxonomyListCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ListTaxonomiesResponse {
     /// Pagination token of the next results page. Empty if there are no more results in the list.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// Taxonomies that the project contains.
+    
     pub taxonomies: Option<Vec<GoogleCloudDatacatalogV1Taxonomy>>,
 }
 
@@ -988,9 +1137,11 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1ListTaxonomiesResponse {
 /// 
 /// * [locations entry groups entries modify entry contacts projects](ProjectLocationEntryGroupEntryModifyEntryContactCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ModifyEntryContactsRequest {
     /// Required. The new value for the Contacts.
+    
     pub contacts: Option<GoogleCloudDatacatalogV1Contacts>,
 }
 
@@ -1006,10 +1157,12 @@ impl client::RequestValue for GoogleCloudDatacatalogV1ModifyEntryContactsRequest
 /// 
 /// * [locations entry groups entries modify entry overview projects](ProjectLocationEntryGroupEntryModifyEntryOverviewCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ModifyEntryOverviewRequest {
     /// Required. The new value for the Entry Overview.
     #[serde(rename="entryOverview")]
+    
     pub entry_overview: Option<GoogleCloudDatacatalogV1EntryOverview>,
 }
 
@@ -1020,12 +1173,15 @@ impl client::RequestValue for GoogleCloudDatacatalogV1ModifyEntryOverviewRequest
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1PersonalDetails {
     /// Set if the entry is starred; unset otherwise.
     #[serde(rename="starTime")]
-    pub star_time: Option<String>,
+    
+    pub star_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// True if the entry is starred by the user; false otherwise.
+    
     pub starred: Option<bool>,
 }
 
@@ -1036,19 +1192,26 @@ impl client::Part for GoogleCloudDatacatalogV1PersonalDetails {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1PhysicalSchema {
     /// Schema in Avro JSON format.
+    
     pub avro: Option<GoogleCloudDatacatalogV1PhysicalSchemaAvroSchema>,
     /// Marks a CSV-encoded data source.
+    
     pub csv: Option<GoogleCloudDatacatalogV1PhysicalSchemaCsvSchema>,
     /// Marks an ORC-encoded data source.
+    
     pub orc: Option<GoogleCloudDatacatalogV1PhysicalSchemaOrcSchema>,
     /// Marks a Parquet-encoded data source.
+    
     pub parquet: Option<GoogleCloudDatacatalogV1PhysicalSchemaParquetSchema>,
     /// Schema in protocol buffer format.
+    
     pub protobuf: Option<GoogleCloudDatacatalogV1PhysicalSchemaProtobufSchema>,
     /// Schema in Thrift format.
+    
     pub thrift: Option<GoogleCloudDatacatalogV1PhysicalSchemaThriftSchema>,
 }
 
@@ -1059,9 +1222,11 @@ impl client::Part for GoogleCloudDatacatalogV1PhysicalSchema {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1PhysicalSchemaAvroSchema {
     /// JSON source of the Avro schema.
+    
     pub text: Option<String>,
 }
 
@@ -1072,6 +1237,7 @@ impl client::Part for GoogleCloudDatacatalogV1PhysicalSchemaAvroSchema {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1PhysicalSchemaCsvSchema { _never_set: Option<bool> }
 
@@ -1082,6 +1248,7 @@ impl client::Part for GoogleCloudDatacatalogV1PhysicalSchemaCsvSchema {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1PhysicalSchemaOrcSchema { _never_set: Option<bool> }
 
@@ -1092,6 +1259,7 @@ impl client::Part for GoogleCloudDatacatalogV1PhysicalSchemaOrcSchema {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1PhysicalSchemaParquetSchema { _never_set: Option<bool> }
 
@@ -1102,9 +1270,11 @@ impl client::Part for GoogleCloudDatacatalogV1PhysicalSchemaParquetSchema {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1PhysicalSchemaProtobufSchema {
     /// Protocol buffer source of the schema.
+    
     pub text: Option<String>,
 }
 
@@ -1115,9 +1285,11 @@ impl client::Part for GoogleCloudDatacatalogV1PhysicalSchemaProtobufSchema {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1PhysicalSchemaThriftSchema {
     /// Thrift IDL source of the schema.
+    
     pub text: Option<String>,
 }
 
@@ -1135,20 +1307,26 @@ impl client::Part for GoogleCloudDatacatalogV1PhysicalSchemaThriftSchema {}
 /// * [locations taxonomies policy tags get projects](ProjectLocationTaxonomyPolicyTagGetCall) (response)
 /// * [locations taxonomies policy tags patch projects](ProjectLocationTaxonomyPolicyTagPatchCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1PolicyTag {
     /// Output only. Resource names of child policy tags of this policy tag.
     #[serde(rename="childPolicyTags")]
+    
     pub child_policy_tags: Option<Vec<String>>,
     /// Description of this policy tag. If not set, defaults to empty. The description must contain only Unicode characters, tabs, newlines, carriage returns and page breaks, and be at most 2000 bytes long when encoded in UTF-8.
+    
     pub description: Option<String>,
     /// Required. User-defined name of this policy tag. The name can't start or end with spaces and must be unique within the parent taxonomy, contain only Unicode letters, numbers, underscores, dashes and spaces, and be at most 200 bytes long when encoded in UTF-8.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// Output only. Resource name of this policy tag in the URL format. The policy tag manager generates unique taxonomy IDs and policy tag IDs.
+    
     pub name: Option<String>,
     /// Resource name of this policy tag's parent policy tag. If empty, this is a top level tag. If not set, defaults to an empty string. For example, for the "LatLong" policy tag in the example above, this field contains the resource name of the "Geolocation" policy tag, and, for "Geolocation", this field is empty.
     #[serde(rename="parentPolicyTag")]
+    
     pub parent_policy_tag: Option<String>,
 }
 
@@ -1165,10 +1343,12 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1PolicyTag {}
 /// 
 /// * [locations tag templates fields enum values rename projects](ProjectLocationTagTemplateFieldEnumValueRenameCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1RenameTagTemplateFieldEnumValueRequest {
     /// Required. The new display name of the enum value. For example, `my_new_enum_value`.
     #[serde(rename="newEnumValueDisplayName")]
+    
     pub new_enum_value_display_name: Option<String>,
 }
 
@@ -1184,10 +1364,12 @@ impl client::RequestValue for GoogleCloudDatacatalogV1RenameTagTemplateFieldEnum
 /// 
 /// * [locations tag templates fields rename projects](ProjectLocationTagTemplateFieldRenameCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1RenameTagTemplateFieldRequest {
     /// Required. The new ID of this tag template field. For example, `my_new_field`.
     #[serde(rename="newTagTemplateFieldId")]
+    
     pub new_tag_template_field_id: Option<String>,
 }
 
@@ -1203,10 +1385,12 @@ impl client::RequestValue for GoogleCloudDatacatalogV1RenameTagTemplateFieldRequ
 /// 
 /// * [locations taxonomies replace projects](ProjectLocationTaxonomyReplaceCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ReplaceTaxonomyRequest {
     /// Required. Taxonomy to update along with its child policy tags.
     #[serde(rename="serializedTaxonomy")]
+    
     pub serialized_taxonomy: Option<GoogleCloudDatacatalogV1SerializedTaxonomy>,
 }
 
@@ -1217,24 +1401,31 @@ impl client::RequestValue for GoogleCloudDatacatalogV1ReplaceTaxonomyRequest {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1RoutineSpec {
     /// Fields specific for BigQuery routines.
     #[serde(rename="bigqueryRoutineSpec")]
+    
     pub bigquery_routine_spec: Option<GoogleCloudDatacatalogV1BigQueryRoutineSpec>,
     /// The body of the routine.
     #[serde(rename="definitionBody")]
+    
     pub definition_body: Option<String>,
     /// The language the routine is written in. The exact value depends on the source system. For BigQuery routines, possible values are: * `SQL` * `JAVASCRIPT`
+    
     pub language: Option<String>,
     /// Return type of the argument. The exact value depends on the source system and the language.
     #[serde(rename="returnType")]
+    
     pub return_type: Option<String>,
     /// Arguments of the routine.
     #[serde(rename="routineArguments")]
+    
     pub routine_arguments: Option<Vec<GoogleCloudDatacatalogV1RoutineSpecArgument>>,
     /// The type of the routine.
     #[serde(rename="routineType")]
+    
     pub routine_type: Option<String>,
 }
 
@@ -1245,14 +1436,18 @@ impl client::Part for GoogleCloudDatacatalogV1RoutineSpec {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1RoutineSpecArgument {
     /// Specifies whether the argument is input or output.
+    
     pub mode: Option<String>,
     /// The name of the argument. A return argument of a function might not have a name.
+    
     pub name: Option<String>,
     /// Type of the argument. The exact value depends on the source system and the language.
     #[serde(rename="type")]
+    
     pub type_: Option<String>,
 }
 
@@ -1263,9 +1458,11 @@ impl client::Part for GoogleCloudDatacatalogV1RoutineSpecArgument {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1Schema {
     /// The unified GoogleSQL-like schema of columns. The overall maximum number of columns and nested columns is 10,000. The maximum nested depth is 15 levels.
+    
     pub columns: Option<Vec<GoogleCloudDatacatalogV1ColumnSchema>>,
 }
 
@@ -1281,20 +1478,26 @@ impl client::Part for GoogleCloudDatacatalogV1Schema {}
 /// 
 /// * [search catalog](CatalogSearchCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1SearchCatalogRequest {
     /// Specifies the order of results. Currently supported case-sensitive values are: * `relevance` that can only be descending * `last_modified_timestamp [asc|desc]` with descending (`desc`) as default * `default` that can only be descending If this parameter is omitted, it defaults to the descending `relevance`.
     #[serde(rename="orderBy")]
+    
     pub order_by: Option<String>,
     /// Number of results to return in a single search page. Can't be negative or 0, defaults to 10 in this case. The maximum number is 1000. If exceeded, throws an "invalid argument" exception.
     #[serde(rename="pageSize")]
+    
     pub page_size: Option<i32>,
     /// Optional. Pagination token that, if specified, returns the next page of search results. If empty, returns the first page. This token is returned in the SearchCatalogResponse.next_page_token field of the response to a previous SearchCatalogRequest call.
     #[serde(rename="pageToken")]
+    
     pub page_token: Option<String>,
     /// Optional. The query string with a minimum of 3 characters and specific syntax. For more information, see [Data Catalog search syntax](https://cloud.google.com/data-catalog/docs/how-to/search-reference). An empty query string returns all data assets (in the specified scope) that you have access to. A query string can be a simple `xyz` or qualified by predicates: * `name:x` * `column:y` * `description:z`
+    
     pub query: Option<String>,
     /// Required. The scope of this search request. The `scope` is invalid if `include_org_ids`, `include_project_ids` are empty AND `include_gcp_public_datasets` is set to `false`. In this case, the request returns an error.
+    
     pub scope: Option<GoogleCloudDatacatalogV1SearchCatalogRequestScope>,
 }
 
@@ -1305,25 +1508,32 @@ impl client::RequestValue for GoogleCloudDatacatalogV1SearchCatalogRequest {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1SearchCatalogRequestScope {
     /// If `true`, include Google Cloud Platform (GCP) public datasets in search results. By default, they are excluded. See [Google Cloud Public Datasets](/public-datasets) for more information.
     #[serde(rename="includeGcpPublicDatasets")]
+    
     pub include_gcp_public_datasets: Option<bool>,
     /// The list of organization IDs to search within. To find your organization ID, follow the steps from [Creating and managing organizations] (/resource-manager/docs/creating-managing-organization).
     #[serde(rename="includeOrgIds")]
+    
     pub include_org_ids: Option<Vec<String>>,
     /// The list of project IDs to search within. For more information on the distinction between project names, IDs, and numbers, see [Projects](/docs/overview/#projects).
     #[serde(rename="includeProjectIds")]
+    
     pub include_project_ids: Option<Vec<String>>,
     /// Optional. This field is deprecated. The search mechanism for public and private tag templates is the same.
     #[serde(rename="includePublicTagTemplates")]
+    
     pub include_public_tag_templates: Option<bool>,
     /// Optional. The list of locations to search within. If empty, all locations are searched. Returns an error if any location in the list isn't one of the [Supported regions](https://cloud.google.com/data-catalog/docs/concepts/regions#supported_regions). If a location is unreachable, its name is returned in the `SearchCatalogResponse.unreachable` field. To get additional information on the error, repeat the search request and set the location name as the value of this parameter.
     #[serde(rename="restrictedLocations")]
+    
     pub restricted_locations: Option<Vec<String>>,
     /// Optional. If `true`, search only among starred entries. By default, all results are returned, starred or not.
     #[serde(rename="starredOnly")]
+    
     pub starred_only: Option<bool>,
 }
 
@@ -1339,14 +1549,18 @@ impl client::Part for GoogleCloudDatacatalogV1SearchCatalogRequestScope {}
 /// 
 /// * [search catalog](CatalogSearchCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1SearchCatalogResponse {
     /// Pagination token that can be used in subsequent calls to retrieve the next page of results.
     #[serde(rename="nextPageToken")]
+    
     pub next_page_token: Option<String>,
     /// Search results.
+    
     pub results: Option<Vec<GoogleCloudDatacatalogV1SearchCatalogResult>>,
     /// Unreachable locations. Search results don't include data from those locations. To get additional information on an error, repeat the search request and restrict it to specific locations by setting the `SearchCatalogRequest.scope.restricted_locations` parameter.
+    
     pub unreachable: Option<Vec<String>>,
 }
 
@@ -1357,36 +1571,47 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1SearchCatalogResponse {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1SearchCatalogResult {
     /// Entry description that can consist of several sentences or paragraphs that describe entry contents.
+    
     pub description: Option<String>,
     /// The display name of the result.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// Fully qualified name (FQN) of the resource. FQNs take two forms: * For non-regionalized resources: `{SYSTEM}:{PROJECT}.{PATH_TO_RESOURCE_SEPARATED_WITH_DOTS}` * For regionalized resources: `{SYSTEM}:{PROJECT}.{LOCATION_ID}.{PATH_TO_RESOURCE_SEPARATED_WITH_DOTS}` Example for a DPMS table: `dataproc_metastore:PROJECT_ID.LOCATION_ID.INSTANCE_ID.DATABASE_ID.TABLE_ID`
     #[serde(rename="fullyQualifiedName")]
+    
     pub fully_qualified_name: Option<String>,
     /// Output only. The source system that Data Catalog automatically integrates with, such as BigQuery, Cloud Pub/Sub, or Dataproc Metastore.
     #[serde(rename="integratedSystem")]
+    
     pub integrated_system: Option<String>,
     /// The full name of the Google Cloud resource the entry belongs to. For more information, see [Full Resource Name] (/apis/design/resource_names#full_resource_name). Example: `//bigquery.googleapis.com/projects/PROJECT_ID/datasets/DATASET_ID/tables/TABLE_ID`
     #[serde(rename="linkedResource")]
+    
     pub linked_resource: Option<String>,
     /// The last modification timestamp of the entry in the source system.
     #[serde(rename="modifyTime")]
-    pub modify_time: Option<String>,
+    
+    pub modify_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// The relative name of the resource in URL format. Examples: * `projects/{PROJECT_ID}/locations/{LOCATION_ID}/entryGroups/{ENTRY_GROUP_ID}/entries/{ENTRY_ID}` * `projects/{PROJECT_ID}/tagTemplates/{TAG_TEMPLATE_ID}`
     #[serde(rename="relativeResourceName")]
+    
     pub relative_resource_name: Option<String>,
     /// Sub-type of the search result. A dot-delimited full type of the resource. The same type you specify in the `type` search predicate. Examples: `entry.table`, `entry.dataStream`, `tagTemplate`.
     #[serde(rename="searchResultSubtype")]
+    
     pub search_result_subtype: Option<String>,
     /// Type of the search result. You can use this field to determine which get method to call to fetch the full resource.
     #[serde(rename="searchResultType")]
+    
     pub search_result_type: Option<String>,
     /// Custom source system that you can manually integrate Data Catalog with.
     #[serde(rename="userSpecifiedSystem")]
+    
     pub user_specified_system: Option<String>,
 }
 
@@ -1397,18 +1622,23 @@ impl client::Part for GoogleCloudDatacatalogV1SearchCatalogResult {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1SerializedPolicyTag {
     /// Children of the policy tag, if any.
     #[serde(rename="childPolicyTags")]
+    
     pub child_policy_tags: Option<Vec<GoogleCloudDatacatalogV1SerializedPolicyTag>>,
     /// Description of the serialized policy tag. At most 2000 bytes when encoded in UTF-8. If not set, defaults to an empty description.
+    
     pub description: Option<String>,
     /// Required. Display name of the policy tag. At most 200 bytes when encoded in UTF-8.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// Resource name of the policy tag. This field is ignored when calling `ImportTaxonomies`.
     #[serde(rename="policyTag")]
+    
     pub policy_tag: Option<String>,
 }
 
@@ -1419,18 +1649,23 @@ impl client::Part for GoogleCloudDatacatalogV1SerializedPolicyTag {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1SerializedTaxonomy {
     /// A list of policy types that are activated per taxonomy.
     #[serde(rename="activatedPolicyTypes")]
+    
     pub activated_policy_types: Option<Vec<String>>,
     /// Description of the serialized taxonomy. At most 2000 bytes when encoded in UTF-8. If not set, defaults to an empty description.
+    
     pub description: Option<String>,
     /// Required. Display name of the taxonomy. At most 200 bytes when encoded in UTF-8.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// Top level policy tags associated with the taxonomy, if any.
     #[serde(rename="policyTags")]
+    
     pub policy_tags: Option<Vec<GoogleCloudDatacatalogV1SerializedPolicyTag>>,
 }
 
@@ -1446,6 +1681,7 @@ impl client::Part for GoogleCloudDatacatalogV1SerializedTaxonomy {}
 /// 
 /// * [locations entry groups entries star projects](ProjectLocationEntryGroupEntryStarCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1StarEntryRequest { _never_set: Option<bool> }
 
@@ -1461,6 +1697,7 @@ impl client::RequestValue for GoogleCloudDatacatalogV1StarEntryRequest {}
 /// 
 /// * [locations entry groups entries star projects](ProjectLocationEntryGroupEntryStarCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1StarEntryResponse { _never_set: Option<bool> }
 
@@ -1471,13 +1708,16 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1StarEntryResponse {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1StorageProperties {
     /// Patterns to identify a set of files for this fileset. Examples of a valid `file_pattern`: * `gs://bucket_name/dir/*`: matches all files in the `bucket_name/dir` directory * `gs://bucket_name/dir/**`: matches all files in the `bucket_name/dir` and all subdirectories recursively * `gs://bucket_name/file*`: matches files prefixed by `file` in `bucket_name` * `gs://bucket_name/??.txt`: matches files with two characters followed by `.txt` in `bucket_name` * `gs://bucket_name/[aeiou].txt`: matches files that contain a single vowel character followed by `.txt` in `bucket_name` * `gs://bucket_name/[a-m].txt`: matches files that contain `a`, `b`, ... or `m` followed by `.txt` in `bucket_name` * `gs://bucket_name/a/*/b`: matches all files in `bucket_name` that match the `a/*/b` pattern, such as `a/c/b`, `a/d/b` * `gs://another_bucket/a.txt`: matches `gs://another_bucket/a.txt`
     #[serde(rename="filePattern")]
+    
     pub file_pattern: Option<Vec<String>>,
     /// File type in MIME format, for example, `text/plain`.
     #[serde(rename="fileType")]
+    
     pub file_type: Option<String>,
 }
 
@@ -1488,17 +1728,21 @@ impl client::Part for GoogleCloudDatacatalogV1StorageProperties {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1SystemTimestamps {
     /// Creation timestamp of the resource within the given system.
     #[serde(rename="createTime")]
-    pub create_time: Option<String>,
+    
+    pub create_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Output only. Expiration timestamp of the resource within the given system. Currently only applicable to BigQuery resources.
     #[serde(rename="expireTime")]
-    pub expire_time: Option<String>,
+    
+    pub expire_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Timestamp of the last modification of the resource or its metadata within a given system. Note: Depending on the source system, not every modification updates this timestamp. For example, BigQuery timestamps every metadata modification but not data or permission changes.
     #[serde(rename="updateTime")]
-    pub update_time: Option<String>,
+    
+    pub update_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
 }
 
 impl client::Part for GoogleCloudDatacatalogV1SystemTimestamps {}
@@ -1508,10 +1752,12 @@ impl client::Part for GoogleCloudDatacatalogV1SystemTimestamps {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1TableSpec {
     /// Output only. If the table is date-sharded, that is, it matches the `[prefix]YYYYMMDD` name pattern, this field is the Data Catalog resource name of the date-sharded grouped entry. For example: `projects/{PROJECT_ID}/locations/{LOCATION}/entrygroups/{ENTRY_GROUP_ID}/entries/{ENTRY_ID}`. Otherwise, `grouped_entry` is empty.
     #[serde(rename="groupedEntry")]
+    
     pub grouped_entry: Option<String>,
 }
 
@@ -1530,18 +1776,24 @@ impl client::Part for GoogleCloudDatacatalogV1TableSpec {}
 /// * [locations entry groups tags create projects](ProjectLocationEntryGroupTagCreateCall) (request|response)
 /// * [locations entry groups tags patch projects](ProjectLocationEntryGroupTagPatchCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1Tag {
     /// Resources like entry can have schemas associated with them. This scope allows you to attach tags to an individual column based on that schema. To attach a tag to a nested column, separate column names with a dot (`.`). Example: `column.nested_column`.
+    
     pub column: Option<String>,
     /// Required. Maps the ID of a tag field to its value and additional information about that field. Tag template defines valid field IDs. A tag must have at least 1 field and at most 500 fields.
+    
     pub fields: Option<HashMap<String, GoogleCloudDatacatalogV1TagField>>,
     /// The resource name of the tag in URL format where tag ID is a system-generated identifier. Note: The tag itself might not be stored in the location specified in its name.
+    
     pub name: Option<String>,
     /// Required. The resource name of the tag template this tag uses. Example: `projects/{PROJECT_ID}/locations/{LOCATION}/tagTemplates/{TAG_TEMPLATE_ID}` This field cannot be modified after creation.
+    
     pub template: Option<String>,
     /// Output only. The display name of the tag template.
     #[serde(rename="templateDisplayName")]
+    
     pub template_display_name: Option<String>,
 }
 
@@ -1553,31 +1805,40 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1Tag {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1TagField {
     /// The value of a tag field with a boolean type.
     #[serde(rename="boolValue")]
+    
     pub bool_value: Option<bool>,
     /// Output only. The display name of this field.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// The value of a tag field with a double type.
     #[serde(rename="doubleValue")]
+    
     pub double_value: Option<f64>,
     /// The value of a tag field with an enum type. This value must be one of the allowed values listed in this enum.
     #[serde(rename="enumValue")]
+    
     pub enum_value: Option<GoogleCloudDatacatalogV1TagFieldEnumValue>,
     /// Output only. The order of this field with respect to other fields in this tag. Can be set by Tag. For example, a higher value can indicate a more important field. The value can be negative. Multiple fields can have the same order, and field orders within a tag don't have to be sequential.
+    
     pub order: Option<i32>,
     /// The value of a tag field with a rich text type. The maximum length is 10 MiB as this value holds HTML descriptions including encoded images. The maximum length of the text without images is 100 KiB.
     #[serde(rename="richtextValue")]
+    
     pub richtext_value: Option<String>,
     /// The value of a tag field with a string type. The maximum length is 2000 UTF-8 characters.
     #[serde(rename="stringValue")]
+    
     pub string_value: Option<String>,
     /// The value of a tag field with a timestamp type.
     #[serde(rename="timestampValue")]
-    pub timestamp_value: Option<String>,
+    
+    pub timestamp_value: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
 }
 
 impl client::Part for GoogleCloudDatacatalogV1TagField {}
@@ -1587,10 +1848,12 @@ impl client::Part for GoogleCloudDatacatalogV1TagField {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1TagFieldEnumValue {
     /// The display name of the enum value.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
 }
 
@@ -1608,17 +1871,22 @@ impl client::Part for GoogleCloudDatacatalogV1TagFieldEnumValue {}
 /// * [locations tag templates get projects](ProjectLocationTagTemplateGetCall) (response)
 /// * [locations tag templates patch projects](ProjectLocationTagTemplatePatchCall) (request|response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1TagTemplate {
     /// Display name for this template. Defaults to an empty string. The name must contain only Unicode letters, numbers (0-9), underscores (_), dashes (-), spaces ( ), and can't start or end with spaces. The maximum length is 200 characters.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// Required. Map of tag template field IDs to the settings for the field. This map is an exhaustive list of the allowed fields. The map must contain at least one field and at most 500 fields. The keys to this map are tag template field IDs. The IDs have the following limitations: * Can contain uppercase and lowercase letters, numbers (0-9) and underscores (_). * Must be at least 1 character and at most 64 characters long. * Must start with a letter or underscore.
+    
     pub fields: Option<HashMap<String, GoogleCloudDatacatalogV1TagTemplateField>>,
     /// Indicates whether tags created with this template are public. Public tags do not require tag template access to appear in ListTags API response. Additionally, you can search for a public tag by value with a simple search query in addition to using a ``tag:`` predicate.
     #[serde(rename="isPubliclyReadable")]
+    
     pub is_publicly_readable: Option<bool>,
     /// The resource name of the tag template in URL format. Note: The tag template itself and its child resources might not be stored in the location specified in its name.
+    
     pub name: Option<String>,
 }
 
@@ -1638,22 +1906,29 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1TagTemplate {}
 /// * [locations tag templates fields patch projects](ProjectLocationTagTemplateFieldPatchCall) (request|response)
 /// * [locations tag templates fields rename projects](ProjectLocationTagTemplateFieldRenameCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1TagTemplateField {
     /// The description for this field. Defaults to an empty string.
+    
     pub description: Option<String>,
     /// The display name for this field. Defaults to an empty string. The name must contain only Unicode letters, numbers (0-9), underscores (_), dashes (-), spaces ( ), and can't start or end with spaces. The maximum length is 200 characters.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// If true, this field is required. Defaults to false.
     #[serde(rename="isRequired")]
+    
     pub is_required: Option<bool>,
     /// Output only. The resource name of the tag template field in URL format. Example: `projects/{PROJECT_ID}/locations/{LOCATION}/tagTemplates/{TAG_TEMPLATE}/fields/{FIELD}` Note: The tag template field itself might not be stored in the location specified in its name. The name must contain only letters (a-z, A-Z), numbers (0-9), or underscores (_), and must start with a letter or underscore. The maximum length is 64 characters.
+    
     pub name: Option<String>,
     /// The order of this field with respect to other fields in this tag template. For example, a higher value can indicate a more important field. The value can be negative. Multiple fields can have the same order and field orders within a tag don't have to be sequential.
+    
     pub order: Option<i32>,
     /// Required. The type of value this tag field can contain.
     #[serde(rename="type")]
+    
     pub type_: Option<GoogleCloudDatacatalogV1FieldType>,
 }
 
@@ -1673,23 +1948,30 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1TagTemplateField {}
 /// * [locations taxonomies patch projects](ProjectLocationTaxonomyPatchCall) (request|response)
 /// * [locations taxonomies replace projects](ProjectLocationTaxonomyReplaceCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1Taxonomy {
     /// Optional. A list of policy types that are activated for this taxonomy. If not set, defaults to an empty list.
     #[serde(rename="activatedPolicyTypes")]
+    
     pub activated_policy_types: Option<Vec<String>>,
     /// Optional. Description of this taxonomy. If not set, defaults to empty. The description must contain only Unicode characters, tabs, newlines, carriage returns, and page breaks, and be at most 2000 bytes long when encoded in UTF-8.
+    
     pub description: Option<String>,
     /// Required. User-defined name of this taxonomy. The name can't start or end with spaces, must contain only Unicode letters, numbers, underscores, dashes, and spaces, and be at most 200 bytes long when encoded in UTF-8.
     #[serde(rename="displayName")]
+    
     pub display_name: Option<String>,
     /// Output only. Resource name of this taxonomy in URL format. Note: Policy tag manager generates unique taxonomy IDs.
+    
     pub name: Option<String>,
     /// Output only. Number of policy tags in this taxonomy.
     #[serde(rename="policyTagCount")]
+    
     pub policy_tag_count: Option<i32>,
     /// Output only. Creation and modification timestamps of this taxonomy.
     #[serde(rename="taxonomyTimestamps")]
+    
     pub taxonomy_timestamps: Option<GoogleCloudDatacatalogV1SystemTimestamps>,
 }
 
@@ -1706,6 +1988,7 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1Taxonomy {}
 /// 
 /// * [locations entry groups entries unstar projects](ProjectLocationEntryGroupEntryUnstarCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1UnstarEntryRequest { _never_set: Option<bool> }
 
@@ -1721,6 +2004,7 @@ impl client::RequestValue for GoogleCloudDatacatalogV1UnstarEntryRequest {}
 /// 
 /// * [locations entry groups entries unstar projects](ProjectLocationEntryGroupEntryUnstarCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1UnstarEntryResponse { _never_set: Option<bool> }
 
@@ -1731,13 +2015,16 @@ impl client::ResponseResult for GoogleCloudDatacatalogV1UnstarEntryResponse {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1UsageSignal {
     /// The end timestamp of the duration of usage statistics.
     #[serde(rename="updateTime")]
-    pub update_time: Option<String>,
+    
+    pub update_time: Option<client::chrono::DateTime<client::chrono::offset::Utc>>,
     /// Usage statistics over each of the predefined time ranges. Supported time ranges are `{"24H", "7D", "30D"}`.
     #[serde(rename="usageWithinTimeRange")]
+    
     pub usage_within_time_range: Option<HashMap<String, GoogleCloudDatacatalogV1UsageStats>>,
 }
 
@@ -1748,19 +2035,24 @@ impl client::Part for GoogleCloudDatacatalogV1UsageSignal {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1UsageStats {
     /// The number of cancelled attempts to use the underlying entry.
     #[serde(rename="totalCancellations")]
+    
     pub total_cancellations: Option<f32>,
     /// The number of successful uses of the underlying entry.
     #[serde(rename="totalCompletions")]
+    
     pub total_completions: Option<f32>,
     /// Total time spent only on successful uses, in milliseconds.
     #[serde(rename="totalExecutionTimeForCompletionsMillis")]
+    
     pub total_execution_time_for_completions_millis: Option<f32>,
     /// The number of failed attempts to use the underlying entry.
     #[serde(rename="totalFailures")]
+    
     pub total_failures: Option<f32>,
 }
 
@@ -1771,10 +2063,12 @@ impl client::Part for GoogleCloudDatacatalogV1UsageStats {}
 /// 
 /// This type is not used in any activity, and only used as *part* of another schema.
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct GoogleCloudDatacatalogV1ViewSpec {
     /// Output only. The query that defines the table view.
     #[serde(rename="viewQuery")]
+    
     pub view_query: Option<String>,
 }
 
@@ -1798,13 +2092,18 @@ impl client::Part for GoogleCloudDatacatalogV1ViewSpec {}
 /// * [locations taxonomies get iam policy projects](ProjectLocationTaxonomyGetIamPolicyCall) (response)
 /// * [locations taxonomies set iam policy projects](ProjectLocationTaxonomySetIamPolicyCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct Policy {
     /// Associates a list of `members`, or principals, with a `role`. Optionally, may specify a `condition` that determines how and when the `bindings` are applied. Each of the `bindings` must contain at least one principal. The `bindings` in a `Policy` can refer to up to 1,500 principals; up to 250 of these principals can be Google groups. Each occurrence of a principal counts towards these limits. For example, if the `bindings` grant 50 different roles to `user:alice@example.com`, and not to any other principal, then you can add another 1,450 principals to the `bindings` in the `Policy`.
+    
     pub bindings: Option<Vec<Binding>>,
     /// `etag` is used for optimistic concurrency control as a way to help prevent simultaneous updates of a policy from overwriting each other. It is strongly suggested that systems make use of the `etag` in the read-modify-write cycle to perform policy updates in order to avoid race conditions: An `etag` is returned in the response to `getIamPolicy`, and systems are expected to put that etag in the request to `setIamPolicy` to ensure that their change will be applied to the same version of the policy. **Important:** If you use IAM Conditions, you must include the `etag` field whenever you call `setIamPolicy`. If you omit this field, then IAM allows you to overwrite a version `3` policy with a version `1` policy, and all of the conditions in the version `3` policy are lost.
-    pub etag: Option<String>,
+    
+    #[serde_as(as = "Option<::client::serde::urlsafe_base64::Wrapper>")]
+    pub etag: Option<Vec<u8>>,
     /// Specifies the format of the policy. Valid values are `0`, `1`, and `3`. Requests that specify an invalid value are rejected. Any operation that affects conditional role bindings must specify version `3`. This requirement applies to the following operations: * Getting a policy that includes a conditional role binding * Adding a conditional role binding to a policy * Changing a conditional role binding in a policy * Removing any role binding, with or without a condition, from a policy that includes conditions **Important:** If you use IAM Conditions, you must include the `etag` field whenever you call `setIamPolicy`. If you omit this field, then IAM allows you to overwrite a version `3` policy with a version `1` policy, and all of the conditions in the version `3` policy are lost. If a policy does not include any conditions, operations on that policy may specify any valid version or leave the field unset. To learn which resources support conditions in their IAM policies, see the [IAM documentation](https://cloud.google.com/iam/help/conditions/resource-policies).
+    
     pub version: Option<i32>,
 }
 
@@ -1823,9 +2122,11 @@ impl client::ResponseResult for Policy {}
 /// * [locations taxonomies policy tags set iam policy projects](ProjectLocationTaxonomyPolicyTagSetIamPolicyCall) (request)
 /// * [locations taxonomies set iam policy projects](ProjectLocationTaxonomySetIamPolicyCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct SetIamPolicyRequest {
     /// REQUIRED: The complete policy to be applied to the `resource`. The size of the policy is limited to a few 10s of KB. An empty policy is a valid policy but certain Cloud Platform services (such as Projects) might reject them.
+    
     pub policy: Option<Policy>,
 }
 
@@ -1845,9 +2146,11 @@ impl client::RequestValue for SetIamPolicyRequest {}
 /// * [locations taxonomies policy tags test iam permissions projects](ProjectLocationTaxonomyPolicyTagTestIamPermissionCall) (request)
 /// * [locations taxonomies test iam permissions projects](ProjectLocationTaxonomyTestIamPermissionCall) (request)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct TestIamPermissionsRequest {
     /// The set of permissions to check for the `resource`. Permissions with wildcards (such as '*' or 'storage.*') are not allowed. For more information see [IAM Overview](https://cloud.google.com/iam/docs/overview#permissions).
+    
     pub permissions: Option<Vec<String>>,
 }
 
@@ -1867,9 +2170,11 @@ impl client::RequestValue for TestIamPermissionsRequest {}
 /// * [locations taxonomies policy tags test iam permissions projects](ProjectLocationTaxonomyPolicyTagTestIamPermissionCall) (response)
 /// * [locations taxonomies test iam permissions projects](ProjectLocationTaxonomyTestIamPermissionCall) (response)
 /// 
+#[serde_with::serde_as(crate = "::client::serde_with")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct TestIamPermissionsResponse {
     /// A subset of `TestPermissionsRequest.permissions` that the caller is allowed.
+    
     pub permissions: Option<Vec<String>>,
 }
 
@@ -1882,7 +2187,7 @@ impl client::ResponseResult for TestIamPermissionsResponse {}
 // #################
 
 /// A builder providing access to all methods supported on *catalog* resources.
-/// It is not used directly, but through the `DataCatalog` hub.
+/// It is not used directly, but through the [`DataCatalog`] hub.
 ///
 /// # Example
 ///
@@ -1895,7 +2200,7 @@ impl client::ResponseResult for TestIamPermissionsResponse {}
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -1940,7 +2245,7 @@ impl<'a, S> CatalogMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *entry* resources.
-/// It is not used directly, but through the `DataCatalog` hub.
+/// It is not used directly, but through the [`DataCatalog`] hub.
 ///
 /// # Example
 ///
@@ -1953,7 +2258,7 @@ impl<'a, S> CatalogMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -1996,7 +2301,7 @@ impl<'a, S> EntryMethods<'a, S> {
 
 
 /// A builder providing access to all methods supported on *project* resources.
-/// It is not used directly, but through the `DataCatalog` hub.
+/// It is not used directly, but through the [`DataCatalog`] hub.
 ///
 /// # Example
 ///
@@ -2009,7 +2314,7 @@ impl<'a, S> EntryMethods<'a, S> {
 /// 
 /// # async fn dox() {
 /// use std::default::Default;
-/// use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// let secret: oauth2::ApplicationSecret = Default::default();
 /// let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3138,7 +3443,7 @@ impl<'a, S> ProjectMethods<'a, S> {
 /// Searches Data Catalog for multiple resources like entries and tags that match a query. This is a [Custom Method] (https://cloud.google.com/apis/design/custom_methods) that doesn't return all information on a resource, only its ID and high level fields. To get more information, you can subsequently call specific get methods. Note: Data Catalog search queries don't guarantee full recall. Results that match your query might not be returned, even in subsequent result pages. Additionally, returned (and not returned) results can vary if you repeat search queries. For more information, see [Data Catalog search syntax] (https://cloud.google.com/data-catalog/docs/how-to/search-reference).
 ///
 /// A builder for the *search* method supported by a *catalog* resource.
-/// It is not used directly, but through a `CatalogMethods` instance.
+/// It is not used directly, but through a [`CatalogMethods`] instance.
 ///
 /// # Example
 ///
@@ -3151,7 +3456,7 @@ impl<'a, S> ProjectMethods<'a, S> {
 /// use datacatalog1::api::GoogleCloudDatacatalogV1SearchCatalogRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3178,14 +3483,14 @@ pub struct CatalogSearchCall<'a, S>
     _request: GoogleCloudDatacatalogV1SearchCatalogRequest,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for CatalogSearchCall<'a, S> {}
 
 impl<'a, S> CatalogSearchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -3196,36 +3501,35 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1SearchCatalogResponse)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.catalog.search",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
+
         for &field in ["alt"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/catalog:search";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -3239,14 +3543,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -3255,23 +3559,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -3287,7 +3597,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -3330,7 +3640,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> CatalogSearchCall<'a, S> {
@@ -3366,25 +3677,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> CatalogSearchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> CatalogSearchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> CatalogSearchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> CatalogSearchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -3393,7 +3715,7 @@ where
 /// Gets an entry by its target resource name. The resource name comes from the source Google Cloud Platform service.
 ///
 /// A builder for the *lookup* method supported by a *entry* resource.
-/// It is not used directly, but through a `EntryMethods` instance.
+/// It is not used directly, but through a [`EntryMethods`] instance.
 ///
 /// # Example
 ///
@@ -3405,7 +3727,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3432,14 +3754,14 @@ pub struct EntryLookupCall<'a, S>
     _fully_qualified_name: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for EntryLookupCall<'a, S> {}
 
 impl<'a, S> EntryLookupCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -3450,55 +3772,54 @@ where
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1Entry)> {
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.entries.lookup",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        if let Some(value) = self._sql_resource {
-            params.push(("sqlResource", value.to_string()));
-        }
-        if let Some(value) = self._linked_resource {
-            params.push(("linkedResource", value.to_string()));
-        }
-        if let Some(value) = self._fully_qualified_name {
-            params.push(("fullyQualifiedName", value.to_string()));
-        }
+
         for &field in ["alt", "sqlResource", "linkedResource", "fullyQualifiedName"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        if let Some(value) = self._sql_resource.as_ref() {
+            params.push("sqlResource", value);
+        }
+        if let Some(value) = self._linked_resource.as_ref() {
+            params.push("linkedResource", value);
+        }
+        if let Some(value) = self._fully_qualified_name.as_ref() {
+            params.push("fullyQualifiedName", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/entries:lookup";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -3506,21 +3827,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -3536,7 +3863,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -3591,7 +3918,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> EntryLookupCall<'a, S> {
@@ -3627,25 +3955,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> EntryLookupCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> EntryLookupCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> EntryLookupCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> EntryLookupCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -3654,7 +3993,7 @@ where
 /// Creates a tag and assigns it to: * An Entry if the method name is `projects.locations.entryGroups.entries.tags.create`. * Or EntryGroupif the method name is `projects.locations.entryGroups.tags.create`. Note: The project identified by the `parent` parameter for the [tag] (https://cloud.google.com/data-catalog/docs/reference/rest/v1/projects.locations.entryGroups.entries.tags/create#path-parameters) and the [tag template] (https://cloud.google.com/data-catalog/docs/reference/rest/v1/projects.locations.tagTemplates/create#path-parameters) used to create the tag must be in the same organization.
 ///
 /// A builder for the *locations.entryGroups.entries.tags.create* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -3667,7 +4006,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1Tag;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3695,14 +4034,14 @@ pub struct ProjectLocationEntryGroupEntryTagCreateCall<'a, S>
     _parent: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryTagCreateCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryTagCreateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -3711,64 +4050,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1Tag)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.tags.create",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
+
         for &field in ["alt", "parent"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("parent", self._parent);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/tags";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -3782,14 +4102,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -3798,23 +4118,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -3830,7 +4156,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -3883,7 +4209,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryTagCreateCall<'a, S> {
@@ -3919,25 +4246,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryTagCreateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryTagCreateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryTagCreateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryTagCreateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -3946,7 +4284,7 @@ where
 /// Deletes a tag.
 ///
 /// A builder for the *locations.entryGroups.entries.tags.delete* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -3958,7 +4296,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -3980,14 +4318,14 @@ pub struct ProjectLocationEntryGroupEntryTagDeleteCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryTagDeleteCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryTagDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -3996,74 +4334,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Empty)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.tags.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -4071,21 +4390,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -4101,7 +4426,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -4145,7 +4470,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryTagDeleteCall<'a, S> {
@@ -4181,25 +4507,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryTagDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryTagDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryTagDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryTagDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -4208,7 +4545,7 @@ where
 /// Lists tags assigned to an Entry. The columns in the response are lowercased.
 ///
 /// A builder for the *locations.entryGroups.entries.tags.list* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -4220,7 +4557,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4246,14 +4583,14 @@ pub struct ProjectLocationEntryGroupEntryTagListCall<'a, S>
     _page_size: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryTagListCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryTagListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -4262,80 +4599,61 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1ListTagsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.tags.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "pageToken", "pageSize"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/tags";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -4343,21 +4661,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -4373,7 +4697,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -4431,7 +4755,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryTagListCall<'a, S> {
@@ -4467,25 +4792,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryTagListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryTagListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryTagListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryTagListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -4494,7 +4830,7 @@ where
 /// Updates an existing tag.
 ///
 /// A builder for the *locations.entryGroups.entries.tags.patch* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -4507,7 +4843,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1Tag;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4524,7 +4860,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_entry_groups_entries_tags_patch(req, "name")
-///              .update_mask("ipsum")
+///              .update_mask(&Default::default())
 ///              .doit().await;
 /// # }
 /// ```
@@ -4534,17 +4870,17 @@ pub struct ProjectLocationEntryGroupEntryTagPatchCall<'a, S>
     hub: &'a DataCatalog<S>,
     _request: GoogleCloudDatacatalogV1Tag,
     _name: String,
-    _update_mask: Option<String>,
+    _update_mask: Option<client::FieldMask>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryTagPatchCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryTagPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -4553,67 +4889,48 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1Tag)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.tags.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._update_mask {
-            params.push(("updateMask", value.to_string()));
-        }
+
         for &field in ["alt", "name", "updateMask"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._update_mask.as_ref() {
+            params.push("updateMask", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -4627,14 +4944,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -4643,23 +4960,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -4675,7 +4998,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -4728,14 +5051,15 @@ where
     /// Names of fields whose values to overwrite on a tag. Currently, a tag has the only modifiable field with the name `fields`. In general, if this parameter is absent or empty, all modifiable fields are overwritten. If such fields are non-required and omitted in the request body, their values are emptied.
     ///
     /// Sets the *update mask* query property to the given value.
-    pub fn update_mask(mut self, new_value: &str) -> ProjectLocationEntryGroupEntryTagPatchCall<'a, S> {
-        self._update_mask = Some(new_value.to_string());
+    pub fn update_mask(mut self, new_value: client::FieldMask) -> ProjectLocationEntryGroupEntryTagPatchCall<'a, S> {
+        self._update_mask = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryTagPatchCall<'a, S> {
@@ -4771,25 +5095,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryTagPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryTagPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryTagPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryTagPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -4798,7 +5133,7 @@ where
 /// Creates an entry. You can create entries only with 'FILESET', 'CLUSTER', 'DATA_STREAM', or custom types. Data Catalog automatically creates entries with other types during metadata ingestion from integrated systems. You must enable the Data Catalog API in the project identified by the `parent` parameter. For more information, see [Data Catalog resource project](https://cloud.google.com/data-catalog/docs/concepts/resource-project). An entry group can have a maximum of 100,000 entries.
 ///
 /// A builder for the *locations.entryGroups.entries.create* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -4811,7 +5146,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1Entry;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -4828,7 +5163,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_entry_groups_entries_create(req, "parent")
-///              .entry_id("Lorem")
+///              .entry_id("gubergren")
 ///              .doit().await;
 /// # }
 /// ```
@@ -4841,14 +5176,14 @@ pub struct ProjectLocationEntryGroupEntryCreateCall<'a, S>
     _entry_id: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryCreateCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryCreateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -4857,67 +5192,48 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1Entry)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.create",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._entry_id {
-            params.push(("entryId", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "entryId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._entry_id.as_ref() {
+            params.push("entryId", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/entries";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -4931,14 +5247,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -4947,23 +5263,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -4979,7 +5301,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5039,7 +5361,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryCreateCall<'a, S> {
@@ -5075,25 +5398,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryCreateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryCreateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryCreateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryCreateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5102,7 +5436,7 @@ where
 /// Deletes an existing entry. You can delete only the entries created by the CreateEntry method. You must enable the Data Catalog API in the project identified by the `name` parameter. For more information, see [Data Catalog resource project](https://cloud.google.com/data-catalog/docs/concepts/resource-project).
 ///
 /// A builder for the *locations.entryGroups.entries.delete* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -5114,7 +5448,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5136,14 +5470,14 @@ pub struct ProjectLocationEntryGroupEntryDeleteCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryDeleteCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -5152,74 +5486,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Empty)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -5227,21 +5542,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -5257,7 +5578,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5301,7 +5622,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryDeleteCall<'a, S> {
@@ -5337,25 +5659,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5364,7 +5697,7 @@ where
 /// Gets an entry.
 ///
 /// A builder for the *locations.entryGroups.entries.get* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -5376,7 +5709,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5398,14 +5731,14 @@ pub struct ProjectLocationEntryGroupEntryGetCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryGetCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -5414,74 +5747,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1Entry)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -5489,21 +5803,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -5519,7 +5839,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5563,7 +5883,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryGetCall<'a, S> {
@@ -5599,25 +5920,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5626,7 +5958,7 @@ where
 /// Gets the access control policy for a resource. May return: * A`NOT_FOUND` error if the resource doesn't exist or you don't have the permission to view it. * An empty policy if the resource exists but doesn't have a set policy. Supported resources are: - Tag templates - Entry groups Note: This method doesn't get policies from Google Cloud Platform resources ingested into Data Catalog. To call this method, you must have the following Google IAM permissions: - `datacatalog.tagTemplates.getIamPolicy` to get policies on tag templates. - `datacatalog.entryGroups.getIamPolicy` to get policies on entry groups.
 ///
 /// A builder for the *locations.entryGroups.entries.getIamPolicy* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -5639,7 +5971,7 @@ where
 /// use datacatalog1::api::GetIamPolicyRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5667,14 +5999,14 @@ pub struct ProjectLocationEntryGroupEntryGetIamPolicyCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryGetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryGetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -5683,64 +6015,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.getIamPolicy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:getIamPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -5754,14 +6067,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -5770,23 +6083,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -5802,7 +6121,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -5855,7 +6174,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryGetIamPolicyCall<'a, S> {
@@ -5891,25 +6211,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryGetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryGetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryGetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryGetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -5918,7 +6249,7 @@ where
 /// Lists entries. Note: Currently, this method can list only custom entries. To get a list of both custom and automatically created entries, use SearchCatalog.
 ///
 /// A builder for the *locations.entryGroups.entries.list* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -5930,7 +6261,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -5942,9 +6273,9 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_entry_groups_entries_list("parent")
-///              .read_mask("ipsum")
-///              .page_token("invidunt")
-///              .page_size(-47)
+///              .read_mask(&Default::default())
+///              .page_token("ea")
+///              .page_size(-55)
 ///              .doit().await;
 /// # }
 /// ```
@@ -5953,19 +6284,19 @@ pub struct ProjectLocationEntryGroupEntryListCall<'a, S>
 
     hub: &'a DataCatalog<S>,
     _parent: String,
-    _read_mask: Option<String>,
+    _read_mask: Option<client::FieldMask>,
     _page_token: Option<String>,
     _page_size: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryListCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -5974,83 +6305,64 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1ListEntriesResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(6 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._read_mask {
-            params.push(("readMask", value.to_string()));
-        }
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "readMask", "pageToken", "pageSize"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(6 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._read_mask.as_ref() {
+            params.push("readMask", value.to_string());
+        }
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/entries";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -6058,21 +6370,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -6088,7 +6406,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -6132,8 +6450,8 @@ where
     /// The fields to return for each entry. If empty or omitted, all fields are returned. For example, to return a list of entries with only the `name` field, set `read_mask` to only one path with the `name` value.
     ///
     /// Sets the *read mask* query property to the given value.
-    pub fn read_mask(mut self, new_value: &str) -> ProjectLocationEntryGroupEntryListCall<'a, S> {
-        self._read_mask = Some(new_value.to_string());
+    pub fn read_mask(mut self, new_value: client::FieldMask) -> ProjectLocationEntryGroupEntryListCall<'a, S> {
+        self._read_mask = Some(new_value);
         self
     }
     /// Pagination token that specifies the next page to return. If empty, the first page is returned.
@@ -6153,7 +6471,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryListCall<'a, S> {
@@ -6189,25 +6508,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -6216,7 +6546,7 @@ where
 /// Modifies contacts, part of the business context of an Entry. To call this method, you must have the `datacatalog.entries.updateContacts` IAM permission on the corresponding project.
 ///
 /// A builder for the *locations.entryGroups.entries.modifyEntryContacts* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -6229,7 +6559,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1ModifyEntryContactsRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -6257,14 +6587,14 @@ pub struct ProjectLocationEntryGroupEntryModifyEntryContactCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryModifyEntryContactCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryModifyEntryContactCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -6273,64 +6603,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1Contacts)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.modifyEntryContacts",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:modifyEntryContacts";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -6344,14 +6655,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -6360,23 +6671,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -6392,7 +6709,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -6445,7 +6762,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryModifyEntryContactCall<'a, S> {
@@ -6481,25 +6799,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryModifyEntryContactCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryModifyEntryContactCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryModifyEntryContactCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryModifyEntryContactCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -6508,7 +6837,7 @@ where
 /// Modifies entry overview, part of the business context of an Entry. To call this method, you must have the `datacatalog.entries.updateOverview` IAM permission on the corresponding project.
 ///
 /// A builder for the *locations.entryGroups.entries.modifyEntryOverview* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -6521,7 +6850,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1ModifyEntryOverviewRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -6549,14 +6878,14 @@ pub struct ProjectLocationEntryGroupEntryModifyEntryOverviewCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryModifyEntryOverviewCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryModifyEntryOverviewCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -6565,64 +6894,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1EntryOverview)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.modifyEntryOverview",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:modifyEntryOverview";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -6636,14 +6946,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -6652,23 +6962,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -6684,7 +7000,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -6737,7 +7053,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryModifyEntryOverviewCall<'a, S> {
@@ -6773,25 +7090,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryModifyEntryOverviewCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryModifyEntryOverviewCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryModifyEntryOverviewCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryModifyEntryOverviewCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -6800,7 +7128,7 @@ where
 /// Updates an existing entry. You must enable the Data Catalog API in the project identified by the `entry.name` parameter. For more information, see [Data Catalog resource project](https://cloud.google.com/data-catalog/docs/concepts/resource-project).
 ///
 /// A builder for the *locations.entryGroups.entries.patch* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -6813,7 +7141,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1Entry;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -6830,7 +7158,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_entry_groups_entries_patch(req, "name")
-///              .update_mask("ut")
+///              .update_mask(&Default::default())
 ///              .doit().await;
 /// # }
 /// ```
@@ -6840,17 +7168,17 @@ pub struct ProjectLocationEntryGroupEntryPatchCall<'a, S>
     hub: &'a DataCatalog<S>,
     _request: GoogleCloudDatacatalogV1Entry,
     _name: String,
-    _update_mask: Option<String>,
+    _update_mask: Option<client::FieldMask>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryPatchCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -6859,67 +7187,48 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1Entry)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._update_mask {
-            params.push(("updateMask", value.to_string()));
-        }
+
         for &field in ["alt", "name", "updateMask"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._update_mask.as_ref() {
+            params.push("updateMask", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -6933,14 +7242,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -6949,23 +7258,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -6981,7 +7296,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -7034,14 +7349,15 @@ where
     /// Names of fields whose values to overwrite on an entry. If this parameter is absent or empty, all modifiable fields are overwritten. If such fields are non-required and omitted in the request body, their values are emptied. You can modify only the fields listed below. For entries with type `DATA_STREAM`: * `schema` For entries with type `FILESET`: * `schema` * `display_name` * `description` * `gcs_fileset_spec` * `gcs_fileset_spec.file_patterns` For entries with `user_specified_type`: * `schema` * `display_name` * `description` * `user_specified_type` * `user_specified_system` * `linked_resource` * `source_system_timestamps`
     ///
     /// Sets the *update mask* query property to the given value.
-    pub fn update_mask(mut self, new_value: &str) -> ProjectLocationEntryGroupEntryPatchCall<'a, S> {
-        self._update_mask = Some(new_value.to_string());
+    pub fn update_mask(mut self, new_value: client::FieldMask) -> ProjectLocationEntryGroupEntryPatchCall<'a, S> {
+        self._update_mask = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryPatchCall<'a, S> {
@@ -7077,25 +7393,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7104,7 +7431,7 @@ where
 /// Marks an Entry as starred by the current user. Starring information is private to each user.
 ///
 /// A builder for the *locations.entryGroups.entries.star* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -7117,7 +7444,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1StarEntryRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7145,14 +7472,14 @@ pub struct ProjectLocationEntryGroupEntryStarCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryStarCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryStarCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7161,64 +7488,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1StarEntryResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.star",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:star";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -7232,14 +7540,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -7248,23 +7556,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -7280,7 +7594,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -7333,7 +7647,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryStarCall<'a, S> {
@@ -7369,25 +7684,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryStarCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryStarCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryStarCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryStarCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7396,7 +7722,7 @@ where
 /// Gets your permissions on a resource. Returns an empty set of permissions if the resource doesn't exist. Supported resources are: - Tag templates - Entry groups Note: This method gets policies only within Data Catalog and can't be used to get policies from BigQuery, Pub/Sub, Dataproc Metastore, and any external Google Cloud Platform resources ingested into Data Catalog. No Google IAM permissions are required to call this method.
 ///
 /// A builder for the *locations.entryGroups.entries.testIamPermissions* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -7409,7 +7735,7 @@ where
 /// use datacatalog1::api::TestIamPermissionsRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7437,14 +7763,14 @@ pub struct ProjectLocationEntryGroupEntryTestIamPermissionCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryTestIamPermissionCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryTestIamPermissionCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7453,64 +7779,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, TestIamPermissionsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.testIamPermissions",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:testIamPermissions";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -7524,14 +7831,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -7540,23 +7847,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -7572,7 +7885,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -7625,7 +7938,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryTestIamPermissionCall<'a, S> {
@@ -7661,25 +7975,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryTestIamPermissionCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryTestIamPermissionCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryTestIamPermissionCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryTestIamPermissionCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7688,7 +8013,7 @@ where
 /// Marks an Entry as NOT starred by the current user. Starring information is private to each user.
 ///
 /// A builder for the *locations.entryGroups.entries.unstar* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -7701,7 +8026,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1UnstarEntryRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -7729,14 +8054,14 @@ pub struct ProjectLocationEntryGroupEntryUnstarCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupEntryUnstarCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupEntryUnstarCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -7745,64 +8070,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1UnstarEntryResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.entries.unstar",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:unstar";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -7816,14 +8122,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -7832,23 +8138,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -7864,7 +8176,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -7917,7 +8229,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupEntryUnstarCall<'a, S> {
@@ -7953,25 +8266,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupEntryUnstarCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupEntryUnstarCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupEntryUnstarCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupEntryUnstarCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -7980,7 +8304,7 @@ where
 /// Creates a tag and assigns it to: * An Entry if the method name is `projects.locations.entryGroups.entries.tags.create`. * Or EntryGroupif the method name is `projects.locations.entryGroups.tags.create`. Note: The project identified by the `parent` parameter for the [tag] (https://cloud.google.com/data-catalog/docs/reference/rest/v1/projects.locations.entryGroups.entries.tags/create#path-parameters) and the [tag template] (https://cloud.google.com/data-catalog/docs/reference/rest/v1/projects.locations.tagTemplates/create#path-parameters) used to create the tag must be in the same organization.
 ///
 /// A builder for the *locations.entryGroups.tags.create* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -7993,7 +8317,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1Tag;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8021,14 +8345,14 @@ pub struct ProjectLocationEntryGroupTagCreateCall<'a, S>
     _parent: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupTagCreateCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupTagCreateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8037,64 +8361,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1Tag)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.tags.create",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
+
         for &field in ["alt", "parent"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("parent", self._parent);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/tags";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -8108,14 +8413,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8124,23 +8429,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8156,7 +8467,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8209,7 +8520,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupTagCreateCall<'a, S> {
@@ -8245,25 +8557,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupTagCreateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupTagCreateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupTagCreateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupTagCreateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8272,7 +8595,7 @@ where
 /// Deletes a tag.
 ///
 /// A builder for the *locations.entryGroups.tags.delete* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -8284,7 +8607,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8306,14 +8629,14 @@ pub struct ProjectLocationEntryGroupTagDeleteCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupTagDeleteCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupTagDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8322,74 +8645,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Empty)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.tags.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8397,21 +8701,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8427,7 +8737,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8471,7 +8781,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupTagDeleteCall<'a, S> {
@@ -8507,25 +8818,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupTagDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupTagDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupTagDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupTagDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8534,7 +8856,7 @@ where
 /// Lists tags assigned to an Entry. The columns in the response are lowercased.
 ///
 /// A builder for the *locations.entryGroups.tags.list* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -8546,7 +8868,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8558,8 +8880,8 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_entry_groups_tags_list("parent")
-///              .page_token("gubergren")
-///              .page_size(-17)
+///              .page_token("ipsum")
+///              .page_size(-50)
 ///              .doit().await;
 /// # }
 /// ```
@@ -8572,14 +8894,14 @@ pub struct ProjectLocationEntryGroupTagListCall<'a, S>
     _page_size: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupTagListCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupTagListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8588,80 +8910,61 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1ListTagsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.tags.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "pageToken", "pageSize"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/tags";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8669,21 +8972,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -8699,7 +9008,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -8757,7 +9066,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupTagListCall<'a, S> {
@@ -8793,25 +9103,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupTagListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupTagListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupTagListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupTagListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -8820,7 +9141,7 @@ where
 /// Updates an existing tag.
 ///
 /// A builder for the *locations.entryGroups.tags.patch* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -8833,7 +9154,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1Tag;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -8850,7 +9171,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_entry_groups_tags_patch(req, "name")
-///              .update_mask("Lorem")
+///              .update_mask(&Default::default())
 ///              .doit().await;
 /// # }
 /// ```
@@ -8860,17 +9181,17 @@ pub struct ProjectLocationEntryGroupTagPatchCall<'a, S>
     hub: &'a DataCatalog<S>,
     _request: GoogleCloudDatacatalogV1Tag,
     _name: String,
-    _update_mask: Option<String>,
+    _update_mask: Option<client::FieldMask>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupTagPatchCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupTagPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -8879,67 +9200,48 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1Tag)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.tags.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._update_mask {
-            params.push(("updateMask", value.to_string()));
-        }
+
         for &field in ["alt", "name", "updateMask"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._update_mask.as_ref() {
+            params.push("updateMask", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -8953,14 +9255,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -8969,23 +9271,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9001,7 +9309,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9054,14 +9362,15 @@ where
     /// Names of fields whose values to overwrite on a tag. Currently, a tag has the only modifiable field with the name `fields`. In general, if this parameter is absent or empty, all modifiable fields are overwritten. If such fields are non-required and omitted in the request body, their values are emptied.
     ///
     /// Sets the *update mask* query property to the given value.
-    pub fn update_mask(mut self, new_value: &str) -> ProjectLocationEntryGroupTagPatchCall<'a, S> {
-        self._update_mask = Some(new_value.to_string());
+    pub fn update_mask(mut self, new_value: client::FieldMask) -> ProjectLocationEntryGroupTagPatchCall<'a, S> {
+        self._update_mask = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupTagPatchCall<'a, S> {
@@ -9097,25 +9406,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupTagPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupTagPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupTagPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupTagPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -9124,7 +9444,7 @@ where
 /// Creates an entry group. An entry group contains logically related entries together with [Cloud Identity and Access Management](/data-catalog/docs/concepts/iam) policies. These policies specify users who can create, edit, and view entries within entry groups. Data Catalog automatically creates entry groups with names that start with the `@` symbol for the following resources: * BigQuery entries (`@bigquery`) * Pub/Sub topics (`@pubsub`) * Dataproc Metastore services (`@dataproc_metastore_{SERVICE_NAME_HASH}`) You can create your own entry groups for Cloud Storage fileset entries and custom entries together with the corresponding IAM policies. User-created entry groups can't contain the `@` symbol, it is reserved for automatically created groups. Entry groups, like entries, can be searched. A maximum of 10,000 entry groups may be created per organization across all locations. You must enable the Data Catalog API in the project identified by the `parent` parameter. For more information, see [Data Catalog resource project](https://cloud.google.com/data-catalog/docs/concepts/resource-project).
 ///
 /// A builder for the *locations.entryGroups.create* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -9137,7 +9457,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1EntryGroup;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -9154,7 +9474,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_entry_groups_create(req, "parent")
-///              .entry_group_id("labore")
+///              .entry_group_id("ea")
 ///              .doit().await;
 /// # }
 /// ```
@@ -9167,14 +9487,14 @@ pub struct ProjectLocationEntryGroupCreateCall<'a, S>
     _entry_group_id: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupCreateCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupCreateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9183,67 +9503,48 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1EntryGroup)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.create",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._entry_group_id {
-            params.push(("entryGroupId", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "entryGroupId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._entry_group_id.as_ref() {
+            params.push("entryGroupId", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/entryGroups";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -9257,14 +9558,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9273,23 +9574,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9305,7 +9612,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9365,7 +9672,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupCreateCall<'a, S> {
@@ -9401,25 +9709,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupCreateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupCreateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupCreateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupCreateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -9428,7 +9747,7 @@ where
 /// Deletes an entry group. You must enable the Data Catalog API in the project identified by the `name` parameter. For more information, see [Data Catalog resource project](https://cloud.google.com/data-catalog/docs/concepts/resource-project).
 ///
 /// A builder for the *locations.entryGroups.delete* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -9440,7 +9759,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -9452,7 +9771,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_entry_groups_delete("name")
-///              .force(false)
+///              .force(true)
 ///              .doit().await;
 /// # }
 /// ```
@@ -9464,14 +9783,14 @@ pub struct ProjectLocationEntryGroupDeleteCall<'a, S>
     _force: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupDeleteCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9480,77 +9799,58 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Empty)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._force {
-            params.push(("force", value.to_string()));
-        }
+
         for &field in ["alt", "name", "force"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._force.as_ref() {
+            params.push("force", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9558,21 +9858,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9588,7 +9894,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9639,7 +9945,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupDeleteCall<'a, S> {
@@ -9675,25 +9982,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -9702,7 +10020,7 @@ where
 /// Gets an entry group.
 ///
 /// A builder for the *locations.entryGroups.get* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -9714,7 +10032,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -9726,7 +10044,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_entry_groups_get("name")
-///              .read_mask("no")
+///              .read_mask(&Default::default())
 ///              .doit().await;
 /// # }
 /// ```
@@ -9735,17 +10053,17 @@ pub struct ProjectLocationEntryGroupGetCall<'a, S>
 
     hub: &'a DataCatalog<S>,
     _name: String,
-    _read_mask: Option<String>,
+    _read_mask: Option<client::FieldMask>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupGetCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -9754,77 +10072,58 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1EntryGroup)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._read_mask {
-            params.push(("readMask", value.to_string()));
-        }
+
         for &field in ["alt", "name", "readMask"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._read_mask.as_ref() {
+            params.push("readMask", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -9832,21 +10131,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -9862,7 +10167,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -9906,14 +10211,15 @@ where
     /// The fields to return. If empty or omitted, all fields are returned.
     ///
     /// Sets the *read mask* query property to the given value.
-    pub fn read_mask(mut self, new_value: &str) -> ProjectLocationEntryGroupGetCall<'a, S> {
-        self._read_mask = Some(new_value.to_string());
+    pub fn read_mask(mut self, new_value: client::FieldMask) -> ProjectLocationEntryGroupGetCall<'a, S> {
+        self._read_mask = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupGetCall<'a, S> {
@@ -9949,25 +10255,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -9976,7 +10293,7 @@ where
 /// Gets the access control policy for a resource. May return: * A`NOT_FOUND` error if the resource doesn't exist or you don't have the permission to view it. * An empty policy if the resource exists but doesn't have a set policy. Supported resources are: - Tag templates - Entry groups Note: This method doesn't get policies from Google Cloud Platform resources ingested into Data Catalog. To call this method, you must have the following Google IAM permissions: - `datacatalog.tagTemplates.getIamPolicy` to get policies on tag templates. - `datacatalog.entryGroups.getIamPolicy` to get policies on entry groups.
 ///
 /// A builder for the *locations.entryGroups.getIamPolicy* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -9989,7 +10306,7 @@ where
 /// use datacatalog1::api::GetIamPolicyRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -10017,14 +10334,14 @@ pub struct ProjectLocationEntryGroupGetIamPolicyCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupGetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupGetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -10033,64 +10350,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.getIamPolicy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:getIamPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -10104,14 +10402,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -10120,23 +10418,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -10152,7 +10456,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -10205,7 +10509,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupGetIamPolicyCall<'a, S> {
@@ -10241,25 +10546,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupGetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupGetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupGetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupGetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -10268,7 +10584,7 @@ where
 /// Lists entry groups.
 ///
 /// A builder for the *locations.entryGroups.list* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -10280,7 +10596,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -10292,8 +10608,8 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_entry_groups_list("parent")
-///              .page_token("et")
-///              .page_size(-43)
+///              .page_token("duo")
+///              .page_size(-80)
 ///              .doit().await;
 /// # }
 /// ```
@@ -10306,14 +10622,14 @@ pub struct ProjectLocationEntryGroupListCall<'a, S>
     _page_size: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupListCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -10322,80 +10638,61 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1ListEntryGroupsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "pageToken", "pageSize"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/entryGroups";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -10403,21 +10700,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -10433,7 +10736,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -10491,7 +10794,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupListCall<'a, S> {
@@ -10527,25 +10831,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -10554,7 +10869,7 @@ where
 /// Updates an entry group. You must enable the Data Catalog API in the project identified by the `entry_group.name` parameter. For more information, see [Data Catalog resource project](https://cloud.google.com/data-catalog/docs/concepts/resource-project).
 ///
 /// A builder for the *locations.entryGroups.patch* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -10567,7 +10882,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1EntryGroup;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -10584,7 +10899,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_entry_groups_patch(req, "name")
-///              .update_mask("et")
+///              .update_mask(&Default::default())
 ///              .doit().await;
 /// # }
 /// ```
@@ -10594,17 +10909,17 @@ pub struct ProjectLocationEntryGroupPatchCall<'a, S>
     hub: &'a DataCatalog<S>,
     _request: GoogleCloudDatacatalogV1EntryGroup,
     _name: String,
-    _update_mask: Option<String>,
+    _update_mask: Option<client::FieldMask>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupPatchCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -10613,67 +10928,48 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1EntryGroup)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._update_mask {
-            params.push(("updateMask", value.to_string()));
-        }
+
         for &field in ["alt", "name", "updateMask"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._update_mask.as_ref() {
+            params.push("updateMask", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -10687,14 +10983,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -10703,23 +10999,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -10735,7 +11037,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -10788,14 +11090,15 @@ where
     /// Names of fields whose values to overwrite on an entry group. If this parameter is absent or empty, all modifiable fields are overwritten. If such fields are non-required and omitted in the request body, their values are emptied.
     ///
     /// Sets the *update mask* query property to the given value.
-    pub fn update_mask(mut self, new_value: &str) -> ProjectLocationEntryGroupPatchCall<'a, S> {
-        self._update_mask = Some(new_value.to_string());
+    pub fn update_mask(mut self, new_value: client::FieldMask) -> ProjectLocationEntryGroupPatchCall<'a, S> {
+        self._update_mask = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupPatchCall<'a, S> {
@@ -10831,25 +11134,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -10858,7 +11172,7 @@ where
 /// Sets an access control policy for a resource. Replaces any existing policy. Supported resources are: - Tag templates - Entry groups Note: This method sets policies only within Data Catalog and can't be used to manage policies in BigQuery, Pub/Sub, Dataproc Metastore, and any external Google Cloud Platform resources synced with the Data Catalog. To call this method, you must have the following Google IAM permissions: - `datacatalog.tagTemplates.setIamPolicy` to set policies on tag templates. - `datacatalog.entryGroups.setIamPolicy` to set policies on entry groups.
 ///
 /// A builder for the *locations.entryGroups.setIamPolicy* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -10871,7 +11185,7 @@ where
 /// use datacatalog1::api::SetIamPolicyRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -10899,14 +11213,14 @@ pub struct ProjectLocationEntryGroupSetIamPolicyCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupSetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupSetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -10915,64 +11229,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.setIamPolicy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:setIamPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -10986,14 +11281,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -11002,23 +11297,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -11034,7 +11335,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -11087,7 +11388,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupSetIamPolicyCall<'a, S> {
@@ -11123,25 +11425,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupSetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupSetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupSetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupSetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -11150,7 +11463,7 @@ where
 /// Gets your permissions on a resource. Returns an empty set of permissions if the resource doesn't exist. Supported resources are: - Tag templates - Entry groups Note: This method gets policies only within Data Catalog and can't be used to get policies from BigQuery, Pub/Sub, Dataproc Metastore, and any external Google Cloud Platform resources ingested into Data Catalog. No Google IAM permissions are required to call this method.
 ///
 /// A builder for the *locations.entryGroups.testIamPermissions* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -11163,7 +11476,7 @@ where
 /// use datacatalog1::api::TestIamPermissionsRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -11191,14 +11504,14 @@ pub struct ProjectLocationEntryGroupTestIamPermissionCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationEntryGroupTestIamPermissionCall<'a, S> {}
 
 impl<'a, S> ProjectLocationEntryGroupTestIamPermissionCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -11207,64 +11520,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, TestIamPermissionsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.entryGroups.testIamPermissions",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:testIamPermissions";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -11278,14 +11572,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -11294,23 +11588,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -11326,7 +11626,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -11379,7 +11679,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationEntryGroupTestIamPermissionCall<'a, S> {
@@ -11415,25 +11716,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationEntryGroupTestIamPermissionCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationEntryGroupTestIamPermissionCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationEntryGroupTestIamPermissionCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationEntryGroupTestIamPermissionCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -11442,7 +11754,7 @@ where
 /// Renames an enum value in a tag template. Within a single enum field, enum values must be unique.
 ///
 /// A builder for the *locations.tagTemplates.fields.enumValues.rename* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -11455,7 +11767,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1RenameTagTemplateFieldEnumValueRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -11483,14 +11795,14 @@ pub struct ProjectLocationTagTemplateFieldEnumValueRenameCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTagTemplateFieldEnumValueRenameCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTagTemplateFieldEnumValueRenameCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -11499,64 +11811,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1TagTemplateField)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.tagTemplates.fields.enumValues.rename",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:rename";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -11570,14 +11863,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -11586,23 +11879,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -11618,7 +11917,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -11671,7 +11970,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTagTemplateFieldEnumValueRenameCall<'a, S> {
@@ -11707,25 +12007,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTagTemplateFieldEnumValueRenameCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTagTemplateFieldEnumValueRenameCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTagTemplateFieldEnumValueRenameCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTagTemplateFieldEnumValueRenameCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -11734,7 +12045,7 @@ where
 /// Creates a field in a tag template. You must enable the Data Catalog API in the project identified by the `parent` parameter. For more information, see [Data Catalog resource project](https://cloud.google.com/data-catalog/docs/concepts/resource-project).
 ///
 /// A builder for the *locations.tagTemplates.fields.create* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -11747,7 +12058,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1TagTemplateField;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -11764,7 +12075,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_tag_templates_fields_create(req, "parent")
-///              .tag_template_field_id("dolore")
+///              .tag_template_field_id("et")
 ///              .doit().await;
 /// # }
 /// ```
@@ -11777,14 +12088,14 @@ pub struct ProjectLocationTagTemplateFieldCreateCall<'a, S>
     _tag_template_field_id: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTagTemplateFieldCreateCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTagTemplateFieldCreateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -11793,67 +12104,48 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1TagTemplateField)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.tagTemplates.fields.create",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._tag_template_field_id {
-            params.push(("tagTemplateFieldId", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "tagTemplateFieldId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._tag_template_field_id.as_ref() {
+            params.push("tagTemplateFieldId", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/fields";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -11867,14 +12159,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -11883,23 +12175,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -11915,7 +12213,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -11975,7 +12273,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTagTemplateFieldCreateCall<'a, S> {
@@ -12011,25 +12310,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTagTemplateFieldCreateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTagTemplateFieldCreateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTagTemplateFieldCreateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTagTemplateFieldCreateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -12038,7 +12348,7 @@ where
 /// Deletes a field in a tag template and all uses of this field from the tags based on this template. You must enable the Data Catalog API in the project identified by the `name` parameter. For more information, see [Data Catalog resource project](https://cloud.google.com/data-catalog/docs/concepts/resource-project).
 ///
 /// A builder for the *locations.tagTemplates.fields.delete* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -12050,7 +12360,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -12074,14 +12384,14 @@ pub struct ProjectLocationTagTemplateFieldDeleteCall<'a, S>
     _force: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTagTemplateFieldDeleteCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTagTemplateFieldDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -12090,77 +12400,58 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Empty)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.tagTemplates.fields.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._force {
-            params.push(("force", value.to_string()));
-        }
+
         for &field in ["alt", "name", "force"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._force.as_ref() {
+            params.push("force", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -12168,21 +12459,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -12198,7 +12495,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -12249,7 +12546,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTagTemplateFieldDeleteCall<'a, S> {
@@ -12285,25 +12583,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTagTemplateFieldDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTagTemplateFieldDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTagTemplateFieldDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTagTemplateFieldDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -12312,7 +12621,7 @@ where
 /// Updates a field in a tag template. You can't update the field type with this method. You must enable the Data Catalog API in the project identified by the `name` parameter. For more information, see [Data Catalog resource project](https://cloud.google.com/data-catalog/docs/concepts/resource-project).
 ///
 /// A builder for the *locations.tagTemplates.fields.patch* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -12325,7 +12634,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1TagTemplateField;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -12342,7 +12651,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_tag_templates_fields_patch(req, "name")
-///              .update_mask("dolor")
+///              .update_mask(&Default::default())
 ///              .doit().await;
 /// # }
 /// ```
@@ -12352,17 +12661,17 @@ pub struct ProjectLocationTagTemplateFieldPatchCall<'a, S>
     hub: &'a DataCatalog<S>,
     _request: GoogleCloudDatacatalogV1TagTemplateField,
     _name: String,
-    _update_mask: Option<String>,
+    _update_mask: Option<client::FieldMask>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTagTemplateFieldPatchCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTagTemplateFieldPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -12371,67 +12680,48 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1TagTemplateField)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.tagTemplates.fields.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._update_mask {
-            params.push(("updateMask", value.to_string()));
-        }
+
         for &field in ["alt", "name", "updateMask"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._update_mask.as_ref() {
+            params.push("updateMask", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -12445,14 +12735,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -12461,23 +12751,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -12493,7 +12789,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -12546,14 +12842,15 @@ where
     /// Optional. Names of fields whose values to overwrite on an individual field of a tag template. The following fields are modifiable: * `display_name` * `type.enum_type` * `is_required` If this parameter is absent or empty, all modifiable fields are overwritten. If such fields are non-required and omitted in the request body, their values are emptied with one exception: when updating an enum type, the provided values are merged with the existing values. Therefore, enum values can only be added, existing enum values cannot be deleted or renamed. Additionally, updating a template field from optional to required is *not* allowed.
     ///
     /// Sets the *update mask* query property to the given value.
-    pub fn update_mask(mut self, new_value: &str) -> ProjectLocationTagTemplateFieldPatchCall<'a, S> {
-        self._update_mask = Some(new_value.to_string());
+    pub fn update_mask(mut self, new_value: client::FieldMask) -> ProjectLocationTagTemplateFieldPatchCall<'a, S> {
+        self._update_mask = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTagTemplateFieldPatchCall<'a, S> {
@@ -12589,25 +12886,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTagTemplateFieldPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTagTemplateFieldPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTagTemplateFieldPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTagTemplateFieldPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -12616,7 +12924,7 @@ where
 /// Renames a field in a tag template. You must enable the Data Catalog API in the project identified by the `name` parameter. For more information, see [Data Catalog resource project] (https://cloud.google.com/data-catalog/docs/concepts/resource-project).
 ///
 /// A builder for the *locations.tagTemplates.fields.rename* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -12629,7 +12937,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1RenameTagTemplateFieldRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -12657,14 +12965,14 @@ pub struct ProjectLocationTagTemplateFieldRenameCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTagTemplateFieldRenameCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTagTemplateFieldRenameCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -12673,64 +12981,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1TagTemplateField)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.tagTemplates.fields.rename",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:rename";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -12744,14 +13033,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -12760,23 +13049,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -12792,7 +13087,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -12845,7 +13140,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTagTemplateFieldRenameCall<'a, S> {
@@ -12881,25 +13177,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTagTemplateFieldRenameCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTagTemplateFieldRenameCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTagTemplateFieldRenameCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTagTemplateFieldRenameCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -12908,7 +13215,7 @@ where
 /// Creates a tag template. You must enable the Data Catalog API in the project identified by the `parent` parameter. For more information, see [Data Catalog resource project] (https://cloud.google.com/data-catalog/docs/concepts/resource-project).
 ///
 /// A builder for the *locations.tagTemplates.create* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -12921,7 +13228,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1TagTemplate;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -12938,7 +13245,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_tag_templates_create(req, "parent")
-///              .tag_template_id("sadipscing")
+///              .tag_template_id("dolore")
 ///              .doit().await;
 /// # }
 /// ```
@@ -12951,14 +13258,14 @@ pub struct ProjectLocationTagTemplateCreateCall<'a, S>
     _tag_template_id: Option<String>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTagTemplateCreateCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTagTemplateCreateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -12967,67 +13274,48 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1TagTemplate)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.tagTemplates.create",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._tag_template_id {
-            params.push(("tagTemplateId", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "tagTemplateId"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._tag_template_id.as_ref() {
+            params.push("tagTemplateId", value);
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/tagTemplates";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -13041,14 +13329,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -13057,23 +13345,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -13089,7 +13383,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -13149,7 +13443,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTagTemplateCreateCall<'a, S> {
@@ -13185,25 +13480,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTagTemplateCreateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTagTemplateCreateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTagTemplateCreateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTagTemplateCreateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -13212,7 +13518,7 @@ where
 /// Deletes a tag template and all tags that use it. You must enable the Data Catalog API in the project identified by the `name` parameter. For more information, see [Data Catalog resource project](https://cloud.google.com/data-catalog/docs/concepts/resource-project).
 ///
 /// A builder for the *locations.tagTemplates.delete* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -13224,7 +13530,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -13248,14 +13554,14 @@ pub struct ProjectLocationTagTemplateDeleteCall<'a, S>
     _force: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTagTemplateDeleteCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTagTemplateDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -13264,77 +13570,58 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Empty)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.tagTemplates.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._force {
-            params.push(("force", value.to_string()));
-        }
+
         for &field in ["alt", "name", "force"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._force.as_ref() {
+            params.push("force", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -13342,21 +13629,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -13372,7 +13665,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -13423,7 +13716,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTagTemplateDeleteCall<'a, S> {
@@ -13459,25 +13753,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTagTemplateDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTagTemplateDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTagTemplateDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTagTemplateDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -13486,7 +13791,7 @@ where
 /// Gets a tag template.
 ///
 /// A builder for the *locations.tagTemplates.get* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -13498,7 +13803,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -13520,14 +13825,14 @@ pub struct ProjectLocationTagTemplateGetCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTagTemplateGetCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTagTemplateGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -13536,74 +13841,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1TagTemplate)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.tagTemplates.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -13611,21 +13897,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -13641,7 +13933,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -13685,7 +13977,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTagTemplateGetCall<'a, S> {
@@ -13721,25 +14014,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTagTemplateGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTagTemplateGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTagTemplateGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTagTemplateGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -13748,7 +14052,7 @@ where
 /// Gets the access control policy for a resource. May return: * A`NOT_FOUND` error if the resource doesn't exist or you don't have the permission to view it. * An empty policy if the resource exists but doesn't have a set policy. Supported resources are: - Tag templates - Entry groups Note: This method doesn't get policies from Google Cloud Platform resources ingested into Data Catalog. To call this method, you must have the following Google IAM permissions: - `datacatalog.tagTemplates.getIamPolicy` to get policies on tag templates. - `datacatalog.entryGroups.getIamPolicy` to get policies on entry groups.
 ///
 /// A builder for the *locations.tagTemplates.getIamPolicy* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -13761,7 +14065,7 @@ where
 /// use datacatalog1::api::GetIamPolicyRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -13789,14 +14093,14 @@ pub struct ProjectLocationTagTemplateGetIamPolicyCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTagTemplateGetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTagTemplateGetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -13805,64 +14109,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.tagTemplates.getIamPolicy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:getIamPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -13876,14 +14161,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -13892,23 +14177,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -13924,7 +14215,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -13977,7 +14268,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTagTemplateGetIamPolicyCall<'a, S> {
@@ -14013,25 +14305,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTagTemplateGetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTagTemplateGetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTagTemplateGetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTagTemplateGetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -14040,7 +14343,7 @@ where
 /// Updates a tag template. You can't update template fields with this method. These fields are separate resources with their own create, update, and delete methods. You must enable the Data Catalog API in the project identified by the `tag_template.name` parameter. For more information, see [Data Catalog resource project](https://cloud.google.com/data-catalog/docs/concepts/resource-project).
 ///
 /// A builder for the *locations.tagTemplates.patch* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -14053,7 +14356,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1TagTemplate;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -14070,7 +14373,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_tag_templates_patch(req, "name")
-///              .update_mask("invidunt")
+///              .update_mask(&Default::default())
 ///              .doit().await;
 /// # }
 /// ```
@@ -14080,17 +14383,17 @@ pub struct ProjectLocationTagTemplatePatchCall<'a, S>
     hub: &'a DataCatalog<S>,
     _request: GoogleCloudDatacatalogV1TagTemplate,
     _name: String,
-    _update_mask: Option<String>,
+    _update_mask: Option<client::FieldMask>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTagTemplatePatchCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTagTemplatePatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -14099,67 +14402,48 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1TagTemplate)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.tagTemplates.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._update_mask {
-            params.push(("updateMask", value.to_string()));
-        }
+
         for &field in ["alt", "name", "updateMask"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._update_mask.as_ref() {
+            params.push("updateMask", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -14173,14 +14457,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -14189,23 +14473,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -14221,7 +14511,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -14274,14 +14564,15 @@ where
     /// Names of fields whose values to overwrite on a tag template. Currently, only `display_name` and `is_publicly_readable` can be overwritten. If this parameter is absent or empty, all modifiable fields are overwritten. If such fields are non-required and omitted in the request body, their values are emptied. Note: Updating the `is_publicly_readable` field may require up to 12 hours to take effect in search results.
     ///
     /// Sets the *update mask* query property to the given value.
-    pub fn update_mask(mut self, new_value: &str) -> ProjectLocationTagTemplatePatchCall<'a, S> {
-        self._update_mask = Some(new_value.to_string());
+    pub fn update_mask(mut self, new_value: client::FieldMask) -> ProjectLocationTagTemplatePatchCall<'a, S> {
+        self._update_mask = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTagTemplatePatchCall<'a, S> {
@@ -14317,25 +14608,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTagTemplatePatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTagTemplatePatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTagTemplatePatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTagTemplatePatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -14344,7 +14646,7 @@ where
 /// Sets an access control policy for a resource. Replaces any existing policy. Supported resources are: - Tag templates - Entry groups Note: This method sets policies only within Data Catalog and can't be used to manage policies in BigQuery, Pub/Sub, Dataproc Metastore, and any external Google Cloud Platform resources synced with the Data Catalog. To call this method, you must have the following Google IAM permissions: - `datacatalog.tagTemplates.setIamPolicy` to set policies on tag templates. - `datacatalog.entryGroups.setIamPolicy` to set policies on entry groups.
 ///
 /// A builder for the *locations.tagTemplates.setIamPolicy* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -14357,7 +14659,7 @@ where
 /// use datacatalog1::api::SetIamPolicyRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -14385,14 +14687,14 @@ pub struct ProjectLocationTagTemplateSetIamPolicyCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTagTemplateSetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTagTemplateSetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -14401,64 +14703,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.tagTemplates.setIamPolicy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:setIamPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -14472,14 +14755,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -14488,23 +14771,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -14520,7 +14809,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -14573,7 +14862,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTagTemplateSetIamPolicyCall<'a, S> {
@@ -14609,25 +14899,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTagTemplateSetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTagTemplateSetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTagTemplateSetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTagTemplateSetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -14636,7 +14937,7 @@ where
 /// Gets your permissions on a resource. Returns an empty set of permissions if the resource doesn't exist. Supported resources are: - Tag templates - Entry groups Note: This method gets policies only within Data Catalog and can't be used to get policies from BigQuery, Pub/Sub, Dataproc Metastore, and any external Google Cloud Platform resources ingested into Data Catalog. No Google IAM permissions are required to call this method.
 ///
 /// A builder for the *locations.tagTemplates.testIamPermissions* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -14649,7 +14950,7 @@ where
 /// use datacatalog1::api::TestIamPermissionsRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -14677,14 +14978,14 @@ pub struct ProjectLocationTagTemplateTestIamPermissionCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTagTemplateTestIamPermissionCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTagTemplateTestIamPermissionCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -14693,64 +14994,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, TestIamPermissionsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.tagTemplates.testIamPermissions",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:testIamPermissions";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -14764,14 +15046,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -14780,23 +15062,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -14812,7 +15100,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -14865,7 +15153,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTagTemplateTestIamPermissionCall<'a, S> {
@@ -14901,25 +15190,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTagTemplateTestIamPermissionCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTagTemplateTestIamPermissionCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTagTemplateTestIamPermissionCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTagTemplateTestIamPermissionCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -14928,7 +15228,7 @@ where
 /// Creates a policy tag in a taxonomy.
 ///
 /// A builder for the *locations.taxonomies.policyTags.create* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -14941,7 +15241,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1PolicyTag;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -14969,14 +15269,14 @@ pub struct ProjectLocationTaxonomyPolicyTagCreateCall<'a, S>
     _parent: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyPolicyTagCreateCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyPolicyTagCreateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -14985,64 +15285,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1PolicyTag)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.policyTags.create",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
+
         for &field in ["alt", "parent"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("parent", self._parent);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/policyTags";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -15056,14 +15337,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -15072,23 +15353,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -15104,7 +15391,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -15157,7 +15444,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyPolicyTagCreateCall<'a, S> {
@@ -15193,25 +15481,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyPolicyTagCreateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyPolicyTagCreateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyPolicyTagCreateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyPolicyTagCreateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -15220,7 +15519,7 @@ where
 /// Deletes a policy tag together with the following: * All of its descendant policy tags, if any * Policies associated with the policy tag and its descendants * References from BigQuery table schema of the policy tag and its descendants
 ///
 /// A builder for the *locations.taxonomies.policyTags.delete* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -15232,7 +15531,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -15254,14 +15553,14 @@ pub struct ProjectLocationTaxonomyPolicyTagDeleteCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyPolicyTagDeleteCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyPolicyTagDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -15270,74 +15569,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Empty)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.policyTags.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -15345,21 +15625,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -15375,7 +15661,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -15419,7 +15705,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyPolicyTagDeleteCall<'a, S> {
@@ -15455,25 +15742,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyPolicyTagDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyPolicyTagDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyPolicyTagDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyPolicyTagDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -15482,7 +15780,7 @@ where
 /// Gets a policy tag.
 ///
 /// A builder for the *locations.taxonomies.policyTags.get* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -15494,7 +15792,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -15516,14 +15814,14 @@ pub struct ProjectLocationTaxonomyPolicyTagGetCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyPolicyTagGetCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyPolicyTagGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -15532,74 +15830,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1PolicyTag)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.policyTags.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -15607,21 +15886,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -15637,7 +15922,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -15681,7 +15966,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyPolicyTagGetCall<'a, S> {
@@ -15717,25 +16003,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyPolicyTagGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyPolicyTagGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyPolicyTagGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyPolicyTagGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -15744,7 +16041,7 @@ where
 /// Gets the IAM policy for a policy tag or a taxonomy.
 ///
 /// A builder for the *locations.taxonomies.policyTags.getIamPolicy* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -15757,7 +16054,7 @@ where
 /// use datacatalog1::api::GetIamPolicyRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -15785,14 +16082,14 @@ pub struct ProjectLocationTaxonomyPolicyTagGetIamPolicyCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyPolicyTagGetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyPolicyTagGetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -15801,64 +16098,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.policyTags.getIamPolicy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:getIamPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -15872,14 +16150,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -15888,23 +16166,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -15920,7 +16204,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -15973,7 +16257,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyPolicyTagGetIamPolicyCall<'a, S> {
@@ -16009,25 +16294,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyPolicyTagGetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyPolicyTagGetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyPolicyTagGetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyPolicyTagGetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -16036,7 +16332,7 @@ where
 /// Lists all policy tags in a taxonomy.
 ///
 /// A builder for the *locations.taxonomies.policyTags.list* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -16048,7 +16344,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -16060,8 +16356,8 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_taxonomies_policy_tags_list("parent")
-///              .page_token("accusam")
-///              .page_size(-59)
+///              .page_token("invidunt")
+///              .page_size(-65)
 ///              .doit().await;
 /// # }
 /// ```
@@ -16074,14 +16370,14 @@ pub struct ProjectLocationTaxonomyPolicyTagListCall<'a, S>
     _page_size: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyPolicyTagListCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyPolicyTagListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -16090,80 +16386,61 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1ListPolicyTagsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.policyTags.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "pageToken", "pageSize"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/policyTags";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -16171,21 +16448,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -16201,7 +16484,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -16259,7 +16542,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyPolicyTagListCall<'a, S> {
@@ -16295,25 +16579,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyPolicyTagListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyPolicyTagListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyPolicyTagListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyPolicyTagListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -16322,7 +16617,7 @@ where
 /// Updates a policy tag, including its display name, description, and parent policy tag.
 ///
 /// A builder for the *locations.taxonomies.policyTags.patch* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -16335,7 +16630,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1PolicyTag;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -16352,7 +16647,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_taxonomies_policy_tags_patch(req, "name")
-///              .update_mask("voluptua.")
+///              .update_mask(&Default::default())
 ///              .doit().await;
 /// # }
 /// ```
@@ -16362,17 +16657,17 @@ pub struct ProjectLocationTaxonomyPolicyTagPatchCall<'a, S>
     hub: &'a DataCatalog<S>,
     _request: GoogleCloudDatacatalogV1PolicyTag,
     _name: String,
-    _update_mask: Option<String>,
+    _update_mask: Option<client::FieldMask>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyPolicyTagPatchCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyPolicyTagPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -16381,67 +16676,48 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1PolicyTag)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.policyTags.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._update_mask {
-            params.push(("updateMask", value.to_string()));
-        }
+
         for &field in ["alt", "name", "updateMask"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._update_mask.as_ref() {
+            params.push("updateMask", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -16455,14 +16731,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -16471,23 +16747,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -16503,7 +16785,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -16556,14 +16838,15 @@ where
     /// Specifies the fields to update. You can update only display name, description, and parent policy tag. If not set, defaults to all updatable fields. For more information, see [FieldMask] (https://developers.google.com/protocol-buffers/docs/reference/google.protobuf#fieldmask).
     ///
     /// Sets the *update mask* query property to the given value.
-    pub fn update_mask(mut self, new_value: &str) -> ProjectLocationTaxonomyPolicyTagPatchCall<'a, S> {
-        self._update_mask = Some(new_value.to_string());
+    pub fn update_mask(mut self, new_value: client::FieldMask) -> ProjectLocationTaxonomyPolicyTagPatchCall<'a, S> {
+        self._update_mask = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyPolicyTagPatchCall<'a, S> {
@@ -16599,25 +16882,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyPolicyTagPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyPolicyTagPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyPolicyTagPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyPolicyTagPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -16626,7 +16920,7 @@ where
 /// Sets the IAM policy for a policy tag or a taxonomy.
 ///
 /// A builder for the *locations.taxonomies.policyTags.setIamPolicy* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -16639,7 +16933,7 @@ where
 /// use datacatalog1::api::SetIamPolicyRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -16667,14 +16961,14 @@ pub struct ProjectLocationTaxonomyPolicyTagSetIamPolicyCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyPolicyTagSetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyPolicyTagSetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -16683,64 +16977,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.policyTags.setIamPolicy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:setIamPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -16754,14 +17029,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -16770,23 +17045,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -16802,7 +17083,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -16855,7 +17136,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyPolicyTagSetIamPolicyCall<'a, S> {
@@ -16891,25 +17173,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyPolicyTagSetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyPolicyTagSetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyPolicyTagSetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyPolicyTagSetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -16918,7 +17211,7 @@ where
 /// Returns your permissions on a specified policy tag or taxonomy.
 ///
 /// A builder for the *locations.taxonomies.policyTags.testIamPermissions* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -16931,7 +17224,7 @@ where
 /// use datacatalog1::api::TestIamPermissionsRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -16959,14 +17252,14 @@ pub struct ProjectLocationTaxonomyPolicyTagTestIamPermissionCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyPolicyTagTestIamPermissionCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyPolicyTagTestIamPermissionCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -16975,64 +17268,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, TestIamPermissionsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.policyTags.testIamPermissions",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:testIamPermissions";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -17046,14 +17320,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -17062,23 +17336,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -17094,7 +17374,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -17147,7 +17427,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyPolicyTagTestIamPermissionCall<'a, S> {
@@ -17183,25 +17464,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyPolicyTagTestIamPermissionCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyPolicyTagTestIamPermissionCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyPolicyTagTestIamPermissionCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyPolicyTagTestIamPermissionCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -17210,7 +17502,7 @@ where
 /// Creates a taxonomy in a specified project. The taxonomy is initially empty, that is, it doesn't contain policy tags.
 ///
 /// A builder for the *locations.taxonomies.create* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -17223,7 +17515,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1Taxonomy;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -17251,14 +17543,14 @@ pub struct ProjectLocationTaxonomyCreateCall<'a, S>
     _parent: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyCreateCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyCreateCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -17267,64 +17559,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1Taxonomy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.create",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
+
         for &field in ["alt", "parent"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("parent", self._parent);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/taxonomies";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -17338,14 +17611,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -17354,23 +17627,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -17386,7 +17665,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -17439,7 +17718,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyCreateCall<'a, S> {
@@ -17475,25 +17755,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyCreateCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyCreateCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyCreateCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyCreateCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -17502,7 +17793,7 @@ where
 /// Deletes a taxonomy, including all policy tags in this taxonomy, their associated policies, and the policy tags references from BigQuery columns.
 ///
 /// A builder for the *locations.taxonomies.delete* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -17514,7 +17805,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -17536,14 +17827,14 @@ pub struct ProjectLocationTaxonomyDeleteCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyDeleteCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyDeleteCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -17552,74 +17843,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Empty)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.delete",
                                http_method: hyper::Method::DELETE });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -17627,21 +17899,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::DELETE).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::DELETE)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -17657,7 +17935,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -17701,7 +17979,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyDeleteCall<'a, S> {
@@ -17737,25 +18016,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyDeleteCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyDeleteCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyDeleteCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyDeleteCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -17764,7 +18054,7 @@ where
 /// Exports taxonomies in the requested type and returns them, including their policy tags. The requested taxonomies must belong to the same project. This method generates `SerializedTaxonomy` protocol buffers with nested policy tags that can be used as input for `ImportTaxonomies` calls.
 ///
 /// A builder for the *locations.taxonomies.export* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -17776,7 +18066,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -17788,7 +18078,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_taxonomies_export("parent")
-///              .add_taxonomies("takimata")
+///              .add_taxonomies("accusam")
 ///              .serialized_taxonomies(true)
 ///              .doit().await;
 /// # }
@@ -17802,14 +18092,14 @@ pub struct ProjectLocationTaxonomyExportCall<'a, S>
     _serialized_taxonomies: Option<bool>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyExportCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyExportCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -17818,82 +18108,63 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1ExportTaxonomiesResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.export",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if self._taxonomies.len() > 0 {
-            for f in self._taxonomies.iter() {
-                params.push(("taxonomies", f.to_string()));
-            }
-        }
-        if let Some(value) = self._serialized_taxonomies {
-            params.push(("serializedTaxonomies", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "taxonomies", "serializedTaxonomies"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if self._taxonomies.len() > 0 {
+            for f in self._taxonomies.iter() {
+                params.push("taxonomies", f);
+            }
+        }
+        if let Some(value) = self._serialized_taxonomies.as_ref() {
+            params.push("serializedTaxonomies", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/taxonomies:export";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -17901,21 +18172,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -17931,7 +18208,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -17990,7 +18267,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyExportCall<'a, S> {
@@ -18026,25 +18304,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyExportCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyExportCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyExportCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyExportCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -18053,7 +18342,7 @@ where
 /// Gets a taxonomy.
 ///
 /// A builder for the *locations.taxonomies.get* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -18065,7 +18354,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -18087,14 +18376,14 @@ pub struct ProjectLocationTaxonomyGetCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyGetCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyGetCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -18103,74 +18392,55 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1Taxonomy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.get",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(3 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(3 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -18178,21 +18448,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -18208,7 +18484,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -18252,7 +18528,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyGetCall<'a, S> {
@@ -18288,25 +18565,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyGetCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyGetCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyGetCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyGetCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -18315,7 +18603,7 @@ where
 /// Gets the IAM policy for a policy tag or a taxonomy.
 ///
 /// A builder for the *locations.taxonomies.getIamPolicy* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -18328,7 +18616,7 @@ where
 /// use datacatalog1::api::GetIamPolicyRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -18356,14 +18644,14 @@ pub struct ProjectLocationTaxonomyGetIamPolicyCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyGetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyGetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -18372,64 +18660,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.getIamPolicy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:getIamPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -18443,14 +18712,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -18459,23 +18728,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -18491,7 +18766,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -18544,7 +18819,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyGetIamPolicyCall<'a, S> {
@@ -18580,25 +18856,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyGetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyGetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyGetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyGetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -18607,7 +18894,7 @@ where
 /// Creates new taxonomies (including their policy tags) in a given project by importing from inlined or cross-regional sources. For a cross-regional source, new taxonomies are created by copying from a source in another region. For an inlined source, taxonomies and policy tags are created in bulk using nested protocol buffer structures.
 ///
 /// A builder for the *locations.taxonomies.import* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -18620,7 +18907,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1ImportTaxonomiesRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -18648,14 +18935,14 @@ pub struct ProjectLocationTaxonomyImportCall<'a, S>
     _parent: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyImportCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyImportCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -18664,64 +18951,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1ImportTaxonomiesResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.import",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
+
         for &field in ["alt", "parent"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("parent", self._parent);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/taxonomies:import";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -18735,14 +19003,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -18751,23 +19019,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -18783,7 +19057,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -18836,7 +19110,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyImportCall<'a, S> {
@@ -18872,25 +19147,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyImportCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyImportCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyImportCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyImportCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -18899,7 +19185,7 @@ where
 /// Lists all taxonomies in a project in a particular location that you have a permission to view.
 ///
 /// A builder for the *locations.taxonomies.list* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -18911,7 +19197,7 @@ where
 /// # extern crate google_datacatalog1 as datacatalog1;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -18923,8 +19209,8 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_taxonomies_list("parent")
-///              .page_token("dolore")
-///              .page_size(-34)
+///              .page_token("consetetur")
+///              .page_size(-2)
 ///              .doit().await;
 /// # }
 /// ```
@@ -18937,14 +19223,14 @@ pub struct ProjectLocationTaxonomyListCall<'a, S>
     _page_size: Option<i32>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyListCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyListCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -18953,80 +19239,61 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1ListTaxonomiesResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.list",
                                http_method: hyper::Method::GET });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("parent", self._parent.to_string()));
-        if let Some(value) = self._page_token {
-            params.push(("pageToken", value.to_string()));
-        }
-        if let Some(value) = self._page_size {
-            params.push(("pageSize", value.to_string()));
-        }
+
         for &field in ["alt", "parent", "pageToken", "pageSize"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("parent", self._parent);
+        if let Some(value) = self._page_token.as_ref() {
+            params.push("pageToken", value);
+        }
+        if let Some(value) = self._page_size.as_ref() {
+            params.push("pageSize", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+parent}/taxonomies";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+parent}", "parent")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["parent"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["parent"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -19034,21 +19301,27 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::GET).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::GET)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
                         .body(hyper::body::Body::empty());
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -19064,7 +19337,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -19122,7 +19395,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyListCall<'a, S> {
@@ -19158,25 +19432,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyListCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyListCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyListCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyListCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -19185,7 +19470,7 @@ where
 /// Updates a taxonomy, including its display name, description, and activated policy types.
 ///
 /// A builder for the *locations.taxonomies.patch* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -19198,7 +19483,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1Taxonomy;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -19215,7 +19500,7 @@ where
 /// // execute the final call using `doit()`.
 /// // Values shown here are possibly random and not representative !
 /// let result = hub.projects().locations_taxonomies_patch(req, "name")
-///              .update_mask("amet.")
+///              .update_mask(&Default::default())
 ///              .doit().await;
 /// # }
 /// ```
@@ -19225,17 +19510,17 @@ pub struct ProjectLocationTaxonomyPatchCall<'a, S>
     hub: &'a DataCatalog<S>,
     _request: GoogleCloudDatacatalogV1Taxonomy,
     _name: String,
-    _update_mask: Option<String>,
+    _update_mask: Option<client::FieldMask>,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyPatchCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyPatchCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -19244,67 +19529,48 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1Taxonomy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.patch",
                                http_method: hyper::Method::PATCH });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(5 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
-        if let Some(value) = self._update_mask {
-            params.push(("updateMask", value.to_string()));
-        }
+
         for &field in ["alt", "name", "updateMask"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
+
+        let mut params = Params::with_capacity(5 + self._additional_params.len());
+        params.push("name", self._name);
+        if let Some(value) = self._update_mask.as_ref() {
+            params.push("updateMask", value.to_string());
         }
 
-        params.push(("alt", "json".to_string()));
+        params.extend(self._additional_params.iter());
 
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -19318,14 +19584,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -19334,23 +19600,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::PATCH).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::PATCH)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -19366,7 +19638,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -19419,14 +19691,15 @@ where
     /// Specifies fields to update. If not set, defaults to all fields you can update. For more information, see [FieldMask] (https://developers.google.com/protocol-buffers/docs/reference/google.protobuf#fieldmask).
     ///
     /// Sets the *update mask* query property to the given value.
-    pub fn update_mask(mut self, new_value: &str) -> ProjectLocationTaxonomyPatchCall<'a, S> {
-        self._update_mask = Some(new_value.to_string());
+    pub fn update_mask(mut self, new_value: client::FieldMask) -> ProjectLocationTaxonomyPatchCall<'a, S> {
+        self._update_mask = Some(new_value);
         self
     }
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyPatchCall<'a, S> {
@@ -19462,25 +19735,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyPatchCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyPatchCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyPatchCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyPatchCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -19489,7 +19773,7 @@ where
 /// Replaces (updates) a taxonomy and all its policy tags. The taxonomy and its entire hierarchy of policy tags must be represented literally by `SerializedTaxonomy` and the nested `SerializedPolicyTag` messages. This operation automatically does the following: - Deletes the existing policy tags that are missing from the `SerializedPolicyTag`. - Creates policy tags that don't have resource names. They are considered new. - Updates policy tags with valid resources names accordingly.
 ///
 /// A builder for the *locations.taxonomies.replace* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -19502,7 +19786,7 @@ where
 /// use datacatalog1::api::GoogleCloudDatacatalogV1ReplaceTaxonomyRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -19530,14 +19814,14 @@ pub struct ProjectLocationTaxonomyReplaceCall<'a, S>
     _name: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyReplaceCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyReplaceCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -19546,64 +19830,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, GoogleCloudDatacatalogV1Taxonomy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.replace",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("name", self._name.to_string()));
+
         for &field in ["alt", "name"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("name", self._name);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+name}:replace";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+name}", "name")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["name"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["name"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -19617,14 +19882,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -19633,23 +19898,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -19665,7 +19936,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -19718,7 +19989,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyReplaceCall<'a, S> {
@@ -19754,25 +20026,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyReplaceCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyReplaceCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyReplaceCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyReplaceCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -19781,7 +20064,7 @@ where
 /// Sets the IAM policy for a policy tag or a taxonomy.
 ///
 /// A builder for the *locations.taxonomies.setIamPolicy* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -19794,7 +20077,7 @@ where
 /// use datacatalog1::api::SetIamPolicyRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -19822,14 +20105,14 @@ pub struct ProjectLocationTaxonomySetIamPolicyCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomySetIamPolicyCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomySetIamPolicyCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -19838,64 +20121,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, Policy)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.setIamPolicy",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:setIamPolicy";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -19909,14 +20173,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -19925,23 +20189,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -19957,7 +20227,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -20010,7 +20280,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomySetIamPolicyCall<'a, S> {
@@ -20046,25 +20317,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomySetIamPolicyCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomySetIamPolicyCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomySetIamPolicyCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomySetIamPolicyCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
@@ -20073,7 +20355,7 @@ where
 /// Returns your permissions on a specified policy tag or taxonomy.
 ///
 /// A builder for the *locations.taxonomies.testIamPermissions* method supported by a *project* resource.
-/// It is not used directly, but through a `ProjectMethods` instance.
+/// It is not used directly, but through a [`ProjectMethods`] instance.
 ///
 /// # Example
 ///
@@ -20086,7 +20368,7 @@ where
 /// use datacatalog1::api::TestIamPermissionsRequest;
 /// # async fn dox() {
 /// # use std::default::Default;
-/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls};
+/// # use datacatalog1::{DataCatalog, oauth2, hyper, hyper_rustls, chrono, FieldMask};
 /// 
 /// # let secret: oauth2::ApplicationSecret = Default::default();
 /// # let auth = oauth2::InstalledFlowAuthenticator::builder(
@@ -20114,14 +20396,14 @@ pub struct ProjectLocationTaxonomyTestIamPermissionCall<'a, S>
     _resource: String,
     _delegate: Option<&'a mut dyn client::Delegate>,
     _additional_params: HashMap<String, String>,
-    _scopes: BTreeMap<String, ()>
+    _scopes: BTreeSet<String>
 }
 
 impl<'a, S> client::CallBuilder for ProjectLocationTaxonomyTestIamPermissionCall<'a, S> {}
 
 impl<'a, S> ProjectLocationTaxonomyTestIamPermissionCall<'a, S>
 where
-    S: tower_service::Service<Uri> + Clone + Send + Sync + 'static,
+    S: tower_service::Service<http::Uri> + Clone + Send + Sync + 'static,
     S::Response: hyper::client::connect::Connection + AsyncRead + AsyncWrite + Send + Unpin + 'static,
     S::Future: Send + Unpin + 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
@@ -20130,64 +20412,45 @@ where
 
     /// Perform the operation you have build so far.
     pub async fn doit(mut self) -> client::Result<(hyper::Response<hyper::body::Body>, TestIamPermissionsResponse)> {
-        use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
         use std::io::{Read, Seek};
         use hyper::header::{CONTENT_TYPE, CONTENT_LENGTH, AUTHORIZATION, USER_AGENT, LOCATION};
-        use client::ToParts;
+        use client::{ToParts, url::Params};
+        use std::borrow::Cow;
+
         let mut dd = client::DefaultDelegate;
-        let mut dlg: &mut dyn client::Delegate = match self._delegate {
-            Some(d) => d,
-            None => &mut dd
-        };
+        let mut dlg: &mut dyn client::Delegate = self._delegate.unwrap_or(&mut dd);
         dlg.begin(client::MethodInfo { id: "datacatalog.projects.locations.taxonomies.testIamPermissions",
                                http_method: hyper::Method::POST });
-        let mut params: Vec<(&str, String)> = Vec::with_capacity(4 + self._additional_params.len());
-        params.push(("resource", self._resource.to_string()));
+
         for &field in ["alt", "resource"].iter() {
             if self._additional_params.contains_key(field) {
                 dlg.finished(false);
                 return Err(client::Error::FieldClash(field));
             }
         }
-        for (name, value) in self._additional_params.iter() {
-            params.push((&name, value.clone()));
-        }
 
-        params.push(("alt", "json".to_string()));
+        let mut params = Params::with_capacity(4 + self._additional_params.len());
+        params.push("resource", self._resource);
 
+        params.extend(self._additional_params.iter());
+
+        params.push("alt", "json");
         let mut url = self.hub._base_url.clone() + "v1/{+resource}:testIamPermissions";
-        if self._scopes.len() == 0 {
-            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string(), ());
+        if self._scopes.is_empty() {
+            self._scopes.insert(Scope::CloudPlatform.as_ref().to_string());
         }
 
         for &(find_this, param_name) in [("{+resource}", "resource")].iter() {
-            let mut replace_with = String::new();
-            for &(name, ref value) in params.iter() {
-                if name == param_name {
-                    replace_with = value.to_string();
-                    break;
-                }
-            }
-            if find_this.as_bytes()[1] == '+' as u8 {
-                replace_with = percent_encode(replace_with.as_bytes(), DEFAULT_ENCODE_SET).to_string();
-            }
-            url = url.replace(find_this, &replace_with);
+            url = params.uri_replacement(url, param_name, find_this, true);
         }
         {
-            let mut indices_for_removal: Vec<usize> = Vec::with_capacity(1);
-            for param_name in ["resource"].iter() {
-                if let Some(index) = params.iter().position(|t| &t.0 == param_name) {
-                    indices_for_removal.push(index);
-                }
-            }
-            for &index in indices_for_removal.iter() {
-                params.remove(index);
-            }
+            let to_remove = ["resource"];
+            params.remove_params(&to_remove);
         }
 
-        let url = url::Url::parse_with_params(&url, params).unwrap();
+        let url = params.parse_with_url(&url);
 
-        let mut json_mime_type: mime::Mime = "application/json".parse().unwrap();
+        let mut json_mime_type = mime::APPLICATION_JSON;
         let mut request_value_reader =
             {
                 let mut value = json::value::to_value(&self._request).expect("serde to work");
@@ -20201,14 +20464,14 @@ where
 
 
         loop {
-            let token = match self.hub.auth.token(&self._scopes.keys().collect::<Vec<_>>()[..]).await {
-                Ok(token) => token.clone(),
-                Err(err) => {
-                    match  dlg.token(&err) {
-                        Some(token) => token,
-                        None => {
+            let token = match self.hub.auth.get_token(&self._scopes.iter().map(String::as_str).collect::<Vec<_>>()[..]).await {
+                Ok(token) => token,
+                Err(e) => {
+                    match dlg.token(e) {
+                        Ok(token) => token,
+                        Err(e) => {
                             dlg.finished(false);
-                            return Err(client::Error::MissingToken(err))
+                            return Err(client::Error::MissingToken(e));
                         }
                     }
                 }
@@ -20217,23 +20480,29 @@ where
             let mut req_result = {
                 let client = &self.hub.client;
                 dlg.pre_request();
-                let mut req_builder = hyper::Request::builder().method(hyper::Method::POST).uri(url.clone().into_string())
-                        .header(USER_AGENT, self.hub._user_agent.clone())                            .header(AUTHORIZATION, format!("Bearer {}", token.as_str()));
+                let mut req_builder = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(url.as_str())
+                    .header(USER_AGENT, self.hub._user_agent.clone());
+
+                if let Some(token) = token.as_ref() {
+                    req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
 
 
                         let request = req_builder
-                        .header(CONTENT_TYPE, format!("{}", json_mime_type.to_string()))
+                        .header(CONTENT_TYPE, json_mime_type.to_string())
                         .header(CONTENT_LENGTH, request_size as u64)
                         .body(hyper::body::Body::from(request_value_reader.get_ref().clone()));
 
                 client.request(request.unwrap()).await
-                
+
             };
 
             match req_result {
                 Err(err) => {
                     if let client::Retry::After(d) = dlg.http_error(&err) {
-                        sleep(d);
+                        sleep(d).await;
                         continue;
                     }
                     dlg.finished(false);
@@ -20249,7 +20518,7 @@ where
                         let server_response = json::from_str::<serde_json::Value>(&res_body_string).ok();
 
                         if let client::Retry::After(d) = dlg.http_failure(&restored_response, server_response.clone()) {
-                            sleep(d);
+                            sleep(d).await;
                             continue;
                         }
 
@@ -20302,7 +20571,8 @@ where
     /// The delegate implementation is consulted whenever there is an intermediate result, or if something goes wrong
     /// while executing the actual API request.
     /// 
-    /// It should be used to handle progress information, and to implement a certain level of resilience.
+    /// ````text
+    ///                   It should be used to handle progress information, and to implement a certain level of resilience.````
     ///
     /// Sets the *delegate* property to the given value.
     pub fn delegate(mut self, new_value: &'a mut dyn client::Delegate) -> ProjectLocationTaxonomyTestIamPermissionCall<'a, S> {
@@ -20338,25 +20608,36 @@ where
 
     /// Identifies the authorization scope for the method you are building.
     ///
-    /// Use this method to actively specify which scope should be used, instead the default `Scope` variant
-    /// `Scope::CloudPlatform`.
+    /// Use this method to actively specify which scope should be used, instead of the default [`Scope`] variant
+    /// [`Scope::CloudPlatform`].
     ///
     /// The `scope` will be added to a set of scopes. This is important as one can maintain access
     /// tokens for more than one scope.
-    /// If `None` is specified, then all scopes will be removed and no default scope will be used either.
-    /// In that case, you have to specify your API-key using the `key` parameter (see the `param()`
-    /// function for details).
     ///
     /// Usually there is more than one suitable scope to authorize an operation, some of which may
     /// encompass more rights than others. For example, for listing resources, a *read-only* scope will be
     /// sufficient, a read-write scope will do as well.
-    pub fn add_scope<T, St>(mut self, scope: T) -> ProjectLocationTaxonomyTestIamPermissionCall<'a, S>
-                                                        where T: Into<Option<St>>,
-                                                              St: AsRef<str> {
-        match scope.into() {
-          Some(scope) => self._scopes.insert(scope.as_ref().to_string(), ()),
-          None => None,
-        };
+    pub fn add_scope<St>(mut self, scope: St) -> ProjectLocationTaxonomyTestIamPermissionCall<'a, S>
+                                                        where St: AsRef<str> {
+        self._scopes.insert(String::from(scope.as_ref()));
+        self
+    }
+    /// Identifies the authorization scope(s) for the method you are building.
+    ///
+    /// See [`Self::add_scope()`] for details.
+    pub fn add_scopes<I, St>(mut self, scopes: I) -> ProjectLocationTaxonomyTestIamPermissionCall<'a, S>
+                                                        where I: IntoIterator<Item = St>,
+                                                         St: AsRef<str> {
+        self._scopes
+            .extend(scopes.into_iter().map(|s| String::from(s.as_ref())));
+        self
+    }
+
+    /// Removes all scopes, and no default scope will be used either.
+    /// In this case, you have to specify your API-key using the `key` parameter (see [`Self::param()`]
+    /// for details).
+    pub fn clear_scopes(mut self) -> ProjectLocationTaxonomyTestIamPermissionCall<'a, S> {
+        self._scopes.clear();
         self
     }
 }
