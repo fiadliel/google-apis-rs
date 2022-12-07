@@ -3,8 +3,6 @@
 // DO NOT EDIT !
 #![allow(unused_variables, unused_imports, dead_code, unused_mut)]
 
-extern crate tokio;
-
 #[macro_use]
 extern crate clap;
 
@@ -12,9 +10,10 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_bigquery2::{api, Error, oauth2};
+use google_bigquery2::{api, Error, oauth2, client::chrono, FieldMask};
 
-mod client;
+
+use google_clis_common as client;
 
 use client::{InvalidOptionsError, CLIError, arg_from_str, writer_from_opts, parse_kv_arg,
           input_file_from_opts, input_mime_from_opts, FieldCursor, FieldError, CallType, UploadProtocol,
@@ -58,7 +57,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "delete-contents" => {
-                    call = call.delete_contents(arg_from_str(value.unwrap_or("false"), err, "delete-contents", "boolean"));
+                    call = call.delete_contents(        value.map(|v| arg_from_str(v, err, "delete-contents", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -263,13 +262,13 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
                 },
                 "all" => {
-                    call = call.all(arg_from_str(value.unwrap_or("false"), err, "all", "boolean"));
+                    call = call.all(        value.map(|v| arg_from_str(v, err, "all", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -689,16 +688,16 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "timeout-ms" => {
-                    call = call.timeout_ms(arg_from_str(value.unwrap_or("-0"), err, "timeout-ms", "integer"));
+                    call = call.timeout_ms(        value.map(|v| arg_from_str(v, err, "timeout-ms", "uint32")).unwrap_or(0));
                 },
                 "start-index" => {
-                    call = call.start_index(value.unwrap_or(""));
+                    call = call.start_index(        value.map(|v| arg_from_str(v, err, "start-index", "uint64")).unwrap_or(0));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "location" => {
                     call = call.location(value.unwrap_or(""));
@@ -1026,16 +1025,16 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "min-creation-time" => {
-                    call = call.min_creation_time(value.unwrap_or(""));
+                    call = call.min_creation_time(        value.map(|v| arg_from_str(v, err, "min-creation-time", "uint64")).unwrap_or(0));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "max-creation-time" => {
-                    call = call.max_creation_time(value.unwrap_or(""));
+                    call = call.max_creation_time(        value.map(|v| arg_from_str(v, err, "max-creation-time", "uint64")).unwrap_or(0));
                 },
                 "all-users" => {
-                    call = call.all_users(arg_from_str(value.unwrap_or("false"), err, "all-users", "boolean"));
+                    call = call.all_users(        value.map(|v| arg_from_str(v, err, "all-users", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -1290,7 +1289,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 _ => {
                     let mut found = false;
@@ -1499,7 +1498,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 _ => {
                     let mut found = false;
@@ -1599,7 +1598,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "read-mask" => {
-                    call = call.read_mask(value.unwrap_or(""));
+                    call = call.read_mask(        value.map(|v| arg_from_str(v, err, "read-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 _ => {
                     let mut found = false;
@@ -1753,13 +1752,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "read-mask" => {
-                    call = call.read_mask(value.unwrap_or(""));
+                    call = call.read_mask(        value.map(|v| arg_from_str(v, err, "read-mask", "google-fieldmask")).unwrap_or(FieldMask::default()));
                 },
                 "page-token" => {
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "filter" => {
                     call = call.filter(value.unwrap_or(""));
@@ -2004,7 +2003,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "page-size" => {
-                    call = call.page_size(arg_from_str(value.unwrap_or("-0"), err, "page-size", "integer"));
+                    call = call.page_size(        value.map(|v| arg_from_str(v, err, "page-size", "int32")).unwrap_or(-0));
                 },
                 _ => {
                     let mut found = false;
@@ -2320,7 +2319,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "start-index" => {
-                    call = call.start_index(value.unwrap_or(""));
+                    call = call.start_index(        value.map(|v| arg_from_str(v, err, "start-index", "uint64")).unwrap_or(0));
                 },
                 "selected-fields" => {
                     call = call.selected_fields(value.unwrap_or(""));
@@ -2329,7 +2328,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 _ => {
                     let mut found = false;
@@ -2730,7 +2729,7 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 _ => {
                     let mut found = false;
@@ -2891,7 +2890,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "autodetect-schema" => {
-                    call = call.autodetect_schema(arg_from_str(value.unwrap_or("false"), err, "autodetect-schema", "boolean"));
+                    call = call.autodetect_schema(        value.map(|v| arg_from_str(v, err, "autodetect-schema", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -3224,7 +3223,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "autodetect-schema" => {
-                    call = call.autodetect_schema(arg_from_str(value.unwrap_or("false"), err, "autodetect-schema", "boolean"));
+                    call = call.autodetect_schema(        value.map(|v| arg_from_str(v, err, "autodetect-schema", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -4728,7 +4727,7 @@ async fn main() {
     
     let mut app = App::new("bigquery2")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.1+20220222")
+           .version("5.0.2-beta-1+20220222")
            .about("A data platform for customers to create, manage, share and query data.")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_bigquery2_cli")
            .arg(Arg::with_name("url")

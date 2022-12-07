@@ -3,8 +3,6 @@
 // DO NOT EDIT !
 #![allow(unused_variables, unused_imports, dead_code, unused_mut)]
 
-extern crate tokio;
-
 #[macro_use]
 extern crate clap;
 
@@ -12,9 +10,10 @@ use std::env;
 use std::io::{self, Write};
 use clap::{App, SubCommand, Arg};
 
-use google_blogger3::{api, Error, oauth2};
+use google_blogger3::{api, Error, oauth2, client::chrono, FieldMask};
 
-mod client;
+
+use google_clis_common as client;
 
 use client::{InvalidOptionsError, CLIError, arg_from_str, writer_from_opts, parse_kv_arg,
           input_file_from_opts, input_mime_from_opts, FieldCursor, FieldError, CallType, UploadProtocol,
@@ -58,7 +57,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "max-posts" => {
-                    call = call.max_posts(arg_from_str(value.unwrap_or("-0"), err, "max-posts", "integer"));
+                    call = call.max_posts(        value.map(|v| arg_from_str(v, err, "max-posts", "uint32")).unwrap_or(0));
                 },
                 _ => {
                     let mut found = false;
@@ -117,7 +116,7 @@ where
                     call = call.view(value.unwrap_or(""));
                 },
                 "max-posts" => {
-                    call = call.max_posts(arg_from_str(value.unwrap_or("-0"), err, "max-posts", "integer"));
+                    call = call.max_posts(        value.map(|v| arg_from_str(v, err, "max-posts", "uint32")).unwrap_or(0));
                 },
                 _ => {
                     let mut found = false;
@@ -238,7 +237,7 @@ where
                     call = call.add_role(value.unwrap_or(""));
                 },
                 "fetch-user-info" => {
-                    call = call.fetch_user_info(arg_from_str(value.unwrap_or("false"), err, "fetch-user-info", "boolean"));
+                    call = call.fetch_user_info(        value.map(|v| arg_from_str(v, err, "fetch-user-info", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -458,10 +457,10 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "fetch-bodies" => {
-                    call = call.fetch_bodies(arg_from_str(value.unwrap_or("false"), err, "fetch-bodies", "boolean"));
+                    call = call.fetch_bodies(        value.map(|v| arg_from_str(v, err, "fetch-bodies", "boolean")).unwrap_or(false));
                 },
                 "end-date" => {
                     call = call.end_date(value.unwrap_or(""));
@@ -529,10 +528,10 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "fetch-bodies" => {
-                    call = call.fetch_bodies(arg_from_str(value.unwrap_or("false"), err, "fetch-bodies", "boolean"));
+                    call = call.fetch_bodies(        value.map(|v| arg_from_str(v, err, "fetch-bodies", "boolean")).unwrap_or(false));
                 },
                 "end-date" => {
                     call = call.end_date(value.unwrap_or(""));
@@ -898,7 +897,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "is-draft" => {
-                    call = call.is_draft(arg_from_str(value.unwrap_or("false"), err, "is-draft", "boolean"));
+                    call = call.is_draft(        value.map(|v| arg_from_str(v, err, "is-draft", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -963,10 +962,10 @@ where
                     call = call.page_token(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "fetch-bodies" => {
-                    call = call.fetch_bodies(arg_from_str(value.unwrap_or("false"), err, "fetch-bodies", "boolean"));
+                    call = call.fetch_bodies(        value.map(|v| arg_from_str(v, err, "fetch-bodies", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -1069,10 +1068,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "revert" => {
-                    call = call.revert(arg_from_str(value.unwrap_or("false"), err, "revert", "boolean"));
+                    call = call.revert(        value.map(|v| arg_from_str(v, err, "revert", "boolean")).unwrap_or(false));
                 },
                 "publish" => {
-                    call = call.publish(arg_from_str(value.unwrap_or("false"), err, "publish", "boolean"));
+                    call = call.publish(        value.map(|v| arg_from_str(v, err, "publish", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -1279,10 +1278,10 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "revert" => {
-                    call = call.revert(arg_from_str(value.unwrap_or("false"), err, "revert", "boolean"));
+                    call = call.revert(        value.map(|v| arg_from_str(v, err, "revert", "boolean")).unwrap_or(false));
                 },
                 "publish" => {
-                    call = call.publish(arg_from_str(value.unwrap_or("false"), err, "publish", "boolean"));
+                    call = call.publish(        value.map(|v| arg_from_str(v, err, "publish", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -1338,7 +1337,7 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "max-comments" => {
-                    call = call.max_comments(arg_from_str(value.unwrap_or("-0"), err, "max-comments", "integer"));
+                    call = call.max_comments(        value.map(|v| arg_from_str(v, err, "max-comments", "uint32")).unwrap_or(0));
                 },
                 _ => {
                     let mut found = false;
@@ -1409,13 +1408,13 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "labels" => {
                     call = call.labels(value.unwrap_or(""));
                 },
                 "fetch-bodies" => {
-                    call = call.fetch_bodies(arg_from_str(value.unwrap_or("false"), err, "fetch-bodies", "boolean"));
+                    call = call.fetch_bodies(        value.map(|v| arg_from_str(v, err, "fetch-bodies", "boolean")).unwrap_or(false));
                 },
                 "end-date" => {
                     call = call.end_date(value.unwrap_or(""));
@@ -1521,13 +1520,13 @@ where
                     call = call.view(value.unwrap_or(""));
                 },
                 "max-comments" => {
-                    call = call.max_comments(arg_from_str(value.unwrap_or("-0"), err, "max-comments", "integer"));
+                    call = call.max_comments(        value.map(|v| arg_from_str(v, err, "max-comments", "uint32")).unwrap_or(0));
                 },
                 "fetch-images" => {
-                    call = call.fetch_images(arg_from_str(value.unwrap_or("false"), err, "fetch-images", "boolean"));
+                    call = call.fetch_images(        value.map(|v| arg_from_str(v, err, "fetch-images", "boolean")).unwrap_or(false));
                 },
                 "fetch-body" => {
-                    call = call.fetch_body(arg_from_str(value.unwrap_or("false"), err, "fetch-body", "boolean"));
+                    call = call.fetch_body(        value.map(|v| arg_from_str(v, err, "fetch-body", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -1586,7 +1585,7 @@ where
                     call = call.view(value.unwrap_or(""));
                 },
                 "max-comments" => {
-                    call = call.max_comments(arg_from_str(value.unwrap_or("-0"), err, "max-comments", "integer"));
+                    call = call.max_comments(        value.map(|v| arg_from_str(v, err, "max-comments", "uint32")).unwrap_or(0));
                 },
                 _ => {
                     let mut found = false;
@@ -1699,13 +1698,13 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "is-draft" => {
-                    call = call.is_draft(arg_from_str(value.unwrap_or("false"), err, "is-draft", "boolean"));
+                    call = call.is_draft(        value.map(|v| arg_from_str(v, err, "is-draft", "boolean")).unwrap_or(false));
                 },
                 "fetch-images" => {
-                    call = call.fetch_images(arg_from_str(value.unwrap_or("false"), err, "fetch-images", "boolean"));
+                    call = call.fetch_images(        value.map(|v| arg_from_str(v, err, "fetch-images", "boolean")).unwrap_or(false));
                 },
                 "fetch-body" => {
-                    call = call.fetch_body(arg_from_str(value.unwrap_or("false"), err, "fetch-body", "boolean"));
+                    call = call.fetch_body(        value.map(|v| arg_from_str(v, err, "fetch-body", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -1776,16 +1775,16 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "max-results" => {
-                    call = call.max_results(arg_from_str(value.unwrap_or("-0"), err, "max-results", "integer"));
+                    call = call.max_results(        value.map(|v| arg_from_str(v, err, "max-results", "uint32")).unwrap_or(0));
                 },
                 "labels" => {
                     call = call.labels(value.unwrap_or(""));
                 },
                 "fetch-images" => {
-                    call = call.fetch_images(arg_from_str(value.unwrap_or("false"), err, "fetch-images", "boolean"));
+                    call = call.fetch_images(        value.map(|v| arg_from_str(v, err, "fetch-images", "boolean")).unwrap_or(false));
                 },
                 "fetch-bodies" => {
-                    call = call.fetch_bodies(arg_from_str(value.unwrap_or("false"), err, "fetch-bodies", "boolean"));
+                    call = call.fetch_bodies(        value.map(|v| arg_from_str(v, err, "fetch-bodies", "boolean")).unwrap_or(false));
                 },
                 "end-date" => {
                     call = call.end_date(value.unwrap_or(""));
@@ -1901,19 +1900,19 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "revert" => {
-                    call = call.revert(arg_from_str(value.unwrap_or("false"), err, "revert", "boolean"));
+                    call = call.revert(        value.map(|v| arg_from_str(v, err, "revert", "boolean")).unwrap_or(false));
                 },
                 "publish" => {
-                    call = call.publish(arg_from_str(value.unwrap_or("false"), err, "publish", "boolean"));
+                    call = call.publish(        value.map(|v| arg_from_str(v, err, "publish", "boolean")).unwrap_or(false));
                 },
                 "max-comments" => {
-                    call = call.max_comments(arg_from_str(value.unwrap_or("-0"), err, "max-comments", "integer"));
+                    call = call.max_comments(        value.map(|v| arg_from_str(v, err, "max-comments", "uint32")).unwrap_or(0));
                 },
                 "fetch-images" => {
-                    call = call.fetch_images(arg_from_str(value.unwrap_or("false"), err, "fetch-images", "boolean"));
+                    call = call.fetch_images(        value.map(|v| arg_from_str(v, err, "fetch-images", "boolean")).unwrap_or(false));
                 },
                 "fetch-body" => {
-                    call = call.fetch_body(arg_from_str(value.unwrap_or("false"), err, "fetch-body", "boolean"));
+                    call = call.fetch_body(        value.map(|v| arg_from_str(v, err, "fetch-body", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -2080,7 +2079,7 @@ where
                     call = call.order_by(value.unwrap_or(""));
                 },
                 "fetch-bodies" => {
-                    call = call.fetch_bodies(arg_from_str(value.unwrap_or("false"), err, "fetch-bodies", "boolean"));
+                    call = call.fetch_bodies(        value.map(|v| arg_from_str(v, err, "fetch-bodies", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -2193,19 +2192,19 @@ where
             let (key, value) = parse_kv_arg(&*parg, err, false);
             match key {
                 "revert" => {
-                    call = call.revert(arg_from_str(value.unwrap_or("false"), err, "revert", "boolean"));
+                    call = call.revert(        value.map(|v| arg_from_str(v, err, "revert", "boolean")).unwrap_or(false));
                 },
                 "publish" => {
-                    call = call.publish(arg_from_str(value.unwrap_or("false"), err, "publish", "boolean"));
+                    call = call.publish(        value.map(|v| arg_from_str(v, err, "publish", "boolean")).unwrap_or(false));
                 },
                 "max-comments" => {
-                    call = call.max_comments(arg_from_str(value.unwrap_or("-0"), err, "max-comments", "integer"));
+                    call = call.max_comments(        value.map(|v| arg_from_str(v, err, "max-comments", "uint32")).unwrap_or(0));
                 },
                 "fetch-images" => {
-                    call = call.fetch_images(arg_from_str(value.unwrap_or("false"), err, "fetch-images", "boolean"));
+                    call = call.fetch_images(        value.map(|v| arg_from_str(v, err, "fetch-images", "boolean")).unwrap_or(false));
                 },
                 "fetch-body" => {
-                    call = call.fetch_body(arg_from_str(value.unwrap_or("false"), err, "fetch-body", "boolean"));
+                    call = call.fetch_body(        value.map(|v| arg_from_str(v, err, "fetch-body", "boolean")).unwrap_or(false));
                 },
                 _ => {
                     let mut found = false;
@@ -3493,7 +3492,7 @@ async fn main() {
     
     let mut app = App::new("blogger3")
            .author("Sebastian Thiel <byronimo@gmail.com>")
-           .version("4.0.1+20220305")
+           .version("5.0.2-beta-1+20220305")
            .about("The Blogger API provides access to posts, comments and pages of a Blogger blog.")
            .after_help("All documentation details can be found at http://byron.github.io/google-apis-rs/google_blogger3_cli")
            .arg(Arg::with_name("url")
